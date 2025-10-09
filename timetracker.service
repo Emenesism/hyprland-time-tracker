@@ -1,0 +1,19 @@
+[Unit]
+Description=Time Tracker for Hyprland
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Desktop/Tracker/backend
+ExecStart=%h/Desktop/Tracker/backend/venv/bin/python %h/Desktop/Tracker/backend/main.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment="PATH=%h/Desktop/Tracker/backend/venv/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+
+[Install]
+WantedBy=default.target
