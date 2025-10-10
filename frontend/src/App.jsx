@@ -82,6 +82,19 @@ function App() {
 
     const COLORS = ['#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#14b8a6']
 
+    const RADIAN = Math.PI / 180
+    const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, index }) => {
+        const radius = outerRadius + 18
+        const x = cx + radius * Math.cos(-midAngle * RADIAN)
+        const y = cy + radius * Math.sin(-midAngle * RADIAN)
+        const label = dailyStats && dailyStats[index] ? dailyStats[index].app_name : ''
+        return (
+            <text x={x} y={y} fill="#ffffff" textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central" style={{ fontSize: 12 }}>
+                {`${label} ${(percent * 100).toFixed(0)}%`}
+            </text>
+        )
+    }
+
     // Helper: slugify app name for icon filename
     const slugify = (name) => {
         if (!name) return 'unknown'
@@ -244,8 +257,11 @@ function App() {
                                             nameKey="app_name"
                                             cx="50%"
                                             cy="50%"
+                                            innerRadius={60}
                                             outerRadius={100}
-                                            label={(entry) => entry.app_name}
+                                            paddingAngle={6}
+                                            labelLine={false}
+                                            label={renderCustomizedLabel}
                                         >
                                             {dailyStats.slice(0, 8).map((entry, index) => (
                                                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -255,6 +271,7 @@ function App() {
                                             contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333' }}
                                             formatter={(value) => formatDuration(value)}
                                         />
+                                        <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ color: '#fff' }} />
                                     </PieChart>
                                 </ResponsiveContainer>
                             </div>
@@ -295,7 +312,6 @@ function App() {
                                                     </div>
                                                     <div className="timeline-content">
                                                         <h4>{activity.app_name}</h4>
-                                                        <p>{activity.window_title}</p>
                                                         {activity.duration && (
                                                             <span className="timeline-duration">{formatDuration(activity.duration)}</span>
                                                         )}

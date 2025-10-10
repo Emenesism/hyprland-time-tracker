@@ -280,6 +280,15 @@
     min-height: 300px;
 }
 
+.recharts-legend-wrapper {
+    color: #fff;
+}
+
+.pie-label {
+    font-size: 12px;
+    fill: #fff;
+}
+
 /* Date Selector */
 .date-selector {
     display: flex;
