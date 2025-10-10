@@ -111,6 +111,44 @@ function App() {
         return (parts[0][0] + parts[1][0]).toUpperCase()
     }
 
+    const downloadFile = (filename, content, mime = 'text/plain') => {
+        const blob = new Blob([content], { type: mime })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
+    }
+
+    const exportTimelineAsCSV = () => {
+        if (!timeline || timeline.length === 0) return
+        const headers = ['start_time', 'end_time', 'duration_seconds', 'duration', 'app_name']
+        const rows = timeline.map((r) => {
+            const line = [
+                r.start_time || '',
+                r.end_time || '',
+                r.duration != null ? r.duration : '',
+                r.duration ? formatDuration(r.duration) : '',
+                r.app_name || '',
+            ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')
+            return line
+        })
+        const csv = [headers.join(','), ...rows].join('\n')
+        downloadFile(`timeline-${selectedDate}.csv`, csv, 'text/csv')
+    }
+
+    const exportTimelineAsJSON = () => {
+        const data = {
+            date: selectedDate,
+            exported_at: new Date().toISOString(),
+            activities: timeline
+        }
+        downloadFile(`timeline-${selectedDate}.json`, JSON.stringify(data, null, 2), 'application/json')
+    }
+
     if (loading) {
         return (
             <div className="app">
@@ -294,7 +332,13 @@ function App() {
                         </div>
 
                         <div className="card">
-                            <h2 className="card-title">Activity Timeline - {selectedDate}</h2>
+                            <div className="card-header">
+                                <h2 className="card-title">Activity Timeline - {selectedDate}</h2>
+                                <div className="export-controls">
+                                    <button className="export-btn" onClick={exportTimelineAsCSV}>Export CSV</button>
+                                    <button className="export-btn" onClick={exportTimelineAsJSON}>Export JSON</button>
+                                </div>
+                            </div>
                             <div className="timeline-container">
                                 {timeline.length === 0 ? (
                                     <p className="no-data">No activities recorded for this date.</p>
