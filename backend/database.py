@@ -10,6 +10,43 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def normalize_app_name(app_name: str, window_title: str = None) -> str:
+    """Normalize application names so similar windows are grouped.
+
+    Examples:
+    - any Chrome/Chromium/Brave -> 'chrome'
+    - VSCode/Visual Studio Code -> 'code'
+    - firefox -> 'firefox'
+    - terminals -> 'terminal'
+    Falls back to the original app_name when no rule matches.
+    """
+    if not app_name:
+        return 'unknown'
+
+    s = app_name.lower()
+
+    # Browsers
+    if 'chrome' in s or 'chromium' in s or 'brave' in s or 'google-chrome' in s:
+        return 'chrome'
+    if 'firefox' in s:
+        return 'firefox'
+
+    # VSCode / Visual Studio Code
+    if 'code' in s or 'visual studio' in s or 'vscode' in s:
+        return 'code'
+
+    # Terminals
+    if 'kitty' in s or 'alacritty' in s or 'gnome-terminal' in s or 'konsole' in s or 'terminal' in s:
+        return 'terminal'
+
+    # Fallback: try to clean common suffixes/prefixes
+    cleaned = s.strip()
+    if cleaned:
+        return cleaned
+
+    return app_name
+
+
 class Database:
     def __init__(self, db_path: Path):
         self.db_path = db_path
@@ -72,6 +109,9 @@ class Database:
 
     def start_activity(self, app_name: str, window_title: str) -> int:
         """Start tracking a new activity"""
+        # Normalize app name so similar windows are grouped (e.g., Chrome tabs -> chrome)
+        canonical_app = normalize_app_name(app_name, window_title)
+
         conn = self.get_connection()
         cursor = conn.cursor()
 
@@ -81,7 +121,7 @@ class Database:
         cursor.execute("""
             INSERT INTO activities (app_name, window_title, start_time, date)
             VALUES (?, ?, ?, ?)
-        """, (app_name, window_title, now, date))
+        """, (canonical_app, window_title, now, date))
 
         activity_id = cursor.lastrowid
 
@@ -91,12 +131,12 @@ class Database:
             VALUES (?, ?)
             ON CONFLICT(app_name) DO UPDATE SET
                 last_used = ?
-        """, (app_name, now, now))
+        """, (canonical_app, now, now))
 
         conn.commit()
         conn.close()
 
-        logger.debug(f"Started activity {activity_id}: {app_name} - {window_title}")
+        logger.debug(f"Started activity {activity_id}: {canonical_app} - {window_title}")
         return activity_id
 
     def end_activity(self, activity_id: int):
@@ -158,28 +198,63 @@ class Database:
         """Get statistics for a specific day"""
         if date is None:
             date = datetime.now().strftime("%Y-%m-%d")
-
+        # Fetch raw activity rows and aggregate in Python after normalizing app names
         conn = self.get_connection()
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT 
-                app_name,
-                COUNT(*) as session_count,
-                SUM(duration) as total_duration,
-                AVG(duration) as avg_duration,
-                MIN(start_time) as first_used,
-                MAX(end_time) as last_used
+            SELECT app_name, duration, start_time, end_time
             FROM activities
             WHERE date = ? AND duration IS NOT NULL
-            GROUP BY app_name
-            ORDER BY total_duration DESC
         """, (date,))
 
         rows = cursor.fetchall()
+
+        agg: Dict[str, Dict] = {}
+        for row in rows:
+            raw_app = row['app_name']
+            # window_title is not selected in this query, pass only raw_app
+            norm = normalize_app_name(raw_app)
+            duration = row['duration'] or 0
+            start = row['start_time']
+            end = row['end_time']
+
+            if norm not in agg:
+                agg[norm] = {
+                    'app_name': norm,
+                    'session_count': 0,
+                    'total_duration': 0,
+                    'first_used': start,
+                    'last_used': end
+                }
+
+            entry = agg[norm]
+            entry['session_count'] += 1
+            entry['total_duration'] += duration
+            # first_used is earliest start
+            if start and (entry['first_used'] is None or start < entry['first_used']):
+                entry['first_used'] = start
+            # last_used is latest end
+            if end and (entry['last_used'] is None or end > entry['last_used']):
+                entry['last_used'] = end
+
         conn.close()
 
-        return [dict(row) for row in rows]
+        # Compute average and prepare list
+        results: List[Dict] = []
+        for v in agg.values():
+            avg = int(v['total_duration'] / v['session_count']) if v['session_count'] > 0 else 0
+            results.append({
+                'app_name': v['app_name'],
+                'session_count': v['session_count'],
+                'total_duration': v['total_duration'],
+                'avg_duration': avg,
+                'first_used': v['first_used'],
+                'last_used': v['last_used']
+            })
+
+        results.sort(key=lambda x: x['total_duration'], reverse=True)
+        return results
 
     def get_weekly_stats(self, start_date: Optional[str] = None) -> List[Dict]:
         """Get statistics for the past week"""
@@ -190,21 +265,37 @@ class Database:
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT 
-                date,
-                app_name,
-                SUM(duration) as total_duration,
-                COUNT(*) as session_count
+            SELECT date, app_name, duration
             FROM activities
             WHERE date >= ? AND duration IS NOT NULL
-            GROUP BY date, app_name
-            ORDER BY date DESC, total_duration DESC
         """, (start_date,))
 
         rows = cursor.fetchall()
         conn.close()
 
-        return [dict(row) for row in rows]
+        grouped: Dict[str, Dict[str, Dict]] = {}
+        for row in rows:
+            date = row['date']
+            raw_app = row['app_name']
+            norm = normalize_app_name(raw_app)
+            duration = row['duration'] or 0
+
+            if date not in grouped:
+                grouped[date] = {}
+            if norm not in grouped[date]:
+                grouped[date][norm] = {'date': date, 'app_name': norm, 'total_duration': 0, 'session_count': 0}
+
+            grouped[date][norm]['total_duration'] += duration
+            grouped[date][norm]['session_count'] += 1
+
+        results: List[Dict] = []
+        for date, apps in grouped.items():
+            for app_stat in apps.values():
+                results.append(app_stat)
+
+        # Order by date desc then total_duration desc similar to previous behavior
+        results.sort(key=lambda x: (x['date'], x['total_duration']), reverse=True)
+        return results
 
     def get_timeline(self, date: Optional[str] = None, limit: int = 100) -> List[Dict]:
         """Get activity timeline for a specific day"""
@@ -232,7 +323,13 @@ class Database:
         rows = cursor.fetchall()
         conn.close()
 
-        return [dict(row) for row in rows]
+        result = []
+        for row in rows:
+            r = dict(row)
+            # sqlite3.Row doesn't have get(), use dict keys
+            r['app_name'] = normalize_app_name(row['app_name'], row['window_title'])
+            result.append(r)
+        return result
 
     def get_all_applications(self) -> List[Dict]:
         """Get all tracked applications with their statistics"""
@@ -252,7 +349,25 @@ class Database:
         rows = cursor.fetchall()
         conn.close()
 
-        return [dict(row) for row in rows]
+        agg: Dict[str, Dict] = {}
+        for row in rows:
+            raw_app = row['app_name']
+            norm = normalize_app_name(raw_app)
+            total = row['total_time'] or 0
+            last = row['last_used']
+            category = row['category']
+
+            if norm not in agg:
+                agg[norm] = {'app_name': norm, 'category': category, 'total_time': 0, 'last_used': last}
+
+            agg[norm]['total_time'] += total
+            # latest last_used
+            if last and (agg[norm]['last_used'] is None or last > agg[norm]['last_used']):
+                agg[norm]['last_used'] = last
+
+        results = list(agg.values())
+        results.sort(key=lambda x: x['total_time'], reverse=True)
+        return results
 
     def get_activities(
         self,
@@ -298,7 +413,12 @@ class Database:
         rows = cursor.fetchall()
         conn.close()
 
-        return [dict(row) for row in rows]
+        result = []
+        for row in rows:
+            r = dict(row)
+            r['app_name'] = normalize_app_name(row['app_name'], row['window_title'])
+            result.append(r)
+        return result
 
     def get_summary_stats(self) -> Dict:
         """Get overall summary statistics"""
@@ -313,13 +433,18 @@ class Database:
         """)
         total_time = cursor.fetchone()['total_time'] or 0
 
-        # Total applications
-        cursor.execute("SELECT COUNT(*) as count FROM applications")
-        total_apps = cursor.fetchone()['count']
-
         # Total activities
         cursor.execute("SELECT COUNT(*) as count FROM activities")
         total_activities = cursor.fetchone()['count']
+
+        # Unique applications based on normalized app name (from activities)
+        cursor.execute("SELECT app_name FROM activities WHERE duration IS NOT NULL")
+        rows = cursor.fetchall()
+        apps_set = set()
+        for r in rows:
+            apps_set.add(normalize_app_name(r['app_name']))
+
+        total_apps = len(apps_set)
 
         # Today's time
         today = datetime.now().strftime("%Y-%m-%d")
