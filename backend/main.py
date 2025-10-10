@@ -210,7 +210,7 @@ async def get_weekly_stats(start_date: Optional[str] = None):
 @app.get("/api/timeline")
 async def get_timeline(
     date: Optional[str] = None,
-    limit: int = Query(default=100, ge=1, le=1000)
+    limit: Optional[int] = Query(default=None, ge=1)
 ):
     """
     Get activity timeline

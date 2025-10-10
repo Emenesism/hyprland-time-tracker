@@ -297,7 +297,7 @@ class Database:
         results.sort(key=lambda x: (x['date'], x['total_duration']), reverse=True)
         return results
 
-    def get_timeline(self, date: Optional[str] = None, limit: int = 100) -> List[Dict]:
+    def get_timeline(self, date: Optional[str] = None, limit: Optional[int] = None) -> List[Dict]:
         """Get activity timeline for a specific day"""
         if date is None:
             date = datetime.now().strftime("%Y-%m-%d")
@@ -305,20 +305,35 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT 
-                id,
-                app_name,
-                window_title,
-                start_time,
-                end_time,
-                duration,
-                date
-            FROM activities
-            WHERE date = ?
-            ORDER BY start_time DESC
-            LIMIT ?
-        """, (date, limit))
+        if limit is None:
+            cursor.execute("""
+                SELECT 
+                    id,
+                    app_name,
+                    window_title,
+                    start_time,
+                    end_time,
+                    duration,
+                    date
+                FROM activities
+                WHERE date = ?
+                ORDER BY start_time DESC
+            """, (date,))
+        else:
+            cursor.execute("""
+                SELECT 
+                    id,
+                    app_name,
+                    window_title,
+                    start_time,
+                    end_time,
+                    duration,
+                    date
+                FROM activities
+                WHERE date = ?
+                ORDER BY start_time DESC
+                LIMIT ?
+            """, (date, limit))
 
         rows = cursor.fetchall()
         conn.close()

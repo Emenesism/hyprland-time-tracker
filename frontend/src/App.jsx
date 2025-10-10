@@ -35,7 +35,7 @@ function App() {
                 fetch(`${API_BASE}/stats/summary`),
                 fetch(`${API_BASE}/stats/daily?date=${selectedDate}`),
                 fetch(`${API_BASE}/stats/weekly`),
-                fetch(`${API_BASE}/timeline?date=${selectedDate}&limit=50`),
+                fetch(`${API_BASE}/timeline?date=${selectedDate}`),
                 fetch(`${API_BASE}/applications`),
                 fetch(`${API_BASE}/tracker/status`),
             ])
