@@ -17,6 +17,7 @@ from pydantic import BaseModel
 import config
 from database import Database
 from tracker import create_tracker
+import asyncio
 
 # Configure logging
 logging.basicConfig(
@@ -48,14 +49,8 @@ app.add_middleware(
 # Initialize database
 db = Database(config.DB_PATH)
 
-# Initialize tracker
+# Tracker will be initialized on startup (may require compositor/runtime to be available)
 tracker = None
-
-try:
-    tracker = create_tracker(db, config.TRACKER_POLL_INTERVAL)
-except Exception as e:
-    logger.error(f"Failed to initialize tracker: {e}")
-    logger.warning("API will run without tracking functionality")
 
 
 # Pydantic models for API responses
@@ -105,6 +100,25 @@ class TrackerStatusResponse(BaseModel):
 async def startup_event():
     """Start the tracker when the application starts"""
     logger.info("Starting Time Tracker application")
+    global tracker
+
+    # Try to create the tracker with several retries. This helps if the user service
+    # starts before the graphical compositor (Hyprland) is up.
+    if tracker is None:
+        attempts = 6
+        delay = 5
+        for attempt in range(1, attempts + 1):
+            try:
+                tracker = create_tracker(db, config.TRACKER_POLL_INTERVAL)
+                logger.info("Tracker initialized")
+                break
+            except Exception as e:
+                logger.warning(f"Tracker init attempt {attempt} failed: {e}")
+                if attempt < attempts:
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error("Failed to initialize tracker after retries. API will run without tracking functionality")
+
     if tracker:
         try:
             tracker.start_tracking()
