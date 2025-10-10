@@ -17,7 +17,7 @@ from database import normalize_app_name
 class HyprlandTracker:
     """Tracks active windows in Hyprland/Wayland"""
 
-    def __init__(self, database, poll_interval: int = 2):
+    def __init__(self, database, poll_interval: int = 10):
         self.database = database
         self.poll_interval = poll_interval
         self.current_activity_id = None
