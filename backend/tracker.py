@@ -11,6 +11,7 @@ from typing import Optional, Dict, Tuple
 import threading
 
 logger = logging.getLogger(__name__)
+from database import normalize_app_name
 
 
 class HyprlandTracker:
@@ -125,25 +126,31 @@ class HyprlandTracker:
                 window_info = self.get_active_window()
 
                 if window_info:
-                    app_name, window_title = window_info
+                    raw_app, window_title = window_info
 
-                    # Check if window changed
-                    if (app_name != self.last_app_name or 
-                        window_title != self.last_window_title):
-                        
+                    # Normalize app name so tabs/windows of same app are grouped
+                    canonical_app = normalize_app_name(raw_app, window_title)
+
+                    # Start a new activity only if the normalized app changed.
+                    # Ignore window title changes (so different Chrome tabs stay as one "chrome").
+                    if canonical_app != self.last_app_name:
                         # End previous activity
                         if self.current_activity_id:
                             self.database.end_activity(self.current_activity_id)
                             logger.info(f"Switched from {self.last_app_name}")
 
-                        # Start new activity
+                        # Start new activity for the canonical app
                         self.current_activity_id = self.database.start_activity(
-                            app_name, window_title
+                            canonical_app, window_title
                         )
-                        self.last_app_name = app_name
+                        self.last_app_name = canonical_app
+                        # Keep last_window_title updated but do not use it for change detection
                         self.last_window_title = window_title
                         
-                        logger.info(f"Now tracking: {app_name} - {window_title}")
+                        logger.info(f"Now tracking: {canonical_app} - {window_title}")
+                    else:
+                        # Same normalized app; update window title but keep same activity
+                        self.last_window_title = window_title
 
                 else:
                     # No active window, end current activity
@@ -260,17 +267,20 @@ class X11Tracker:
             try:
                 window_info = self.get_active_window()
                 if window_info:
-                    app_name, window_title = window_info
-                    if (app_name != self.last_app_name or 
-                        window_title != self.last_window_title):
+                    raw_app, window_title = window_info
+                    canonical_app = normalize_app_name(raw_app, window_title)
+                    if canonical_app != self.last_app_name:
                         if self.current_activity_id:
                             self.database.end_activity(self.current_activity_id)
                         self.current_activity_id = self.database.start_activity(
-                            app_name, window_title
+                            canonical_app, window_title
                         )
-                        self.last_app_name = app_name
+                        self.last_app_name = canonical_app
                         self.last_window_title = window_title
-                        logger.info(f"Tracking: {app_name} - {window_title}")
+                        logger.info(f"Tracking: {canonical_app} - {window_title}")
+                    else:
+                        # same normalized app; just update title
+                        self.last_window_title = window_title
             except Exception as e:
                 logger.error(f"Error in X11 tracking loop: {e}")
             time.sleep(self.poll_interval)
