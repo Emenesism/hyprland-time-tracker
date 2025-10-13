@@ -283,7 +283,7 @@ function App() {
                                 <Activity size={20} style={{ marginRight: '8px' }} />
                                 {selectedTask.title}
                             </h2>
-                            <button onClick={() => {setSelectedTask(null); setTaskStats(null)}} className="btn btn-secondary">
+                            <button onClick={() => { setSelectedTask(null); setTaskStats(null) }} className="btn btn-secondary">
                                 Close
                             </button>
                         </div>
