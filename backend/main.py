@@ -93,12 +93,24 @@ class TrackerStatusResponse(BaseModel):
     current_app: Optional[str]
     current_window: Optional[str]
     activity_id: Optional[int]
+    task_id: Optional[int]
+
+
+class TaskResponse(BaseModel):
+    id: int
+    title: str
+    created_at: str
+    updated_at: str
+
+
+class StartTrackingRequest(BaseModel):
+    task_id: int
 
 
 # Startup and shutdown events
 @app.on_event("startup")
 async def startup_event():
-    """Start the tracker when the application starts"""
+    """Initialize the tracker when the application starts (but don't auto-start tracking)"""
     logger.info("Starting Time Tracker application")
     global tracker
 
@@ -110,7 +122,7 @@ async def startup_event():
         for attempt in range(1, attempts + 1):
             try:
                 tracker = create_tracker(db, config.TRACKER_POLL_INTERVAL)
-                logger.info("Tracker initialized")
+                logger.info("Tracker initialized (not started - waiting for manual start)")
                 break
             except Exception as e:
                 logger.warning(f"Tracker init attempt {attempt} failed: {e}")
@@ -118,13 +130,6 @@ async def startup_event():
                     await asyncio.sleep(delay)
                 else:
                     logger.error("Failed to initialize tracker after retries. API will run without tracking functionality")
-
-    if tracker:
-        try:
-            tracker.start_tracking()
-            logger.info("Tracker started successfully")
-        except Exception as e:
-            logger.error(f"Failed to start tracker: {e}")
 
 
 @app.on_event("shutdown")
@@ -157,6 +162,126 @@ async def get_tracker_status():
         raise HTTPException(status_code=503, detail="Tracker not available")
     
     return tracker.get_status()
+
+
+# Task Management Endpoints
+@app.post("/api/tasks", response_model=TaskResponse)
+async def create_task(title: str):
+    """Create a new task"""
+    try:
+        task_id = db.create_task(title)
+        task = db.get_task(task_id)
+        return task
+    except Exception as e:
+        logger.error(f"Error creating task: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tasks")
+async def get_tasks(limit: int = Query(default=100, ge=1, le=1000)):
+    """Get all tasks"""
+    try:
+        tasks = db.get_tasks(limit)
+        return {"tasks": tasks}
+    except Exception as e:
+        logger.error(f"Error getting tasks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tasks/{task_id}", response_model=TaskResponse)
+async def get_task(task_id: int):
+    """Get a specific task"""
+    try:
+        task = db.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return task
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting task: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_task(task_id: int):
+    """Delete a task"""
+    try:
+        success = db.delete_task(task_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return {"status": "deleted", "task_id": task_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting task: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tasks/{task_id}/stats")
+async def get_task_stats(task_id: int):
+    """Get statistics for a specific task"""
+    try:
+        task = db.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        stats = db.get_task_stats(task_id)
+        return {
+            "task": task,
+            "stats": stats
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting task stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Manual Tracking Control Endpoints
+@app.post("/api/tracker/start")
+async def start_tracking(task_id: int):
+    """Start tracking for a specific task"""
+    if not tracker:
+        raise HTTPException(status_code=503, detail="Tracker not available")
+    
+    try:
+        # Verify task exists
+        task = db.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        # Stop current tracking if running
+        if tracker.running:
+            tracker.stop_tracking()
+        
+        # Start tracking for new task
+        tracker.start_tracking(task_id)
+        
+        return {
+            "status": "started",
+            "task_id": task_id,
+            "task_title": task['title']
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting tracker: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tracker/stop")
+async def stop_tracking():
+    """Stop tracking"""
+    if not tracker:
+        raise HTTPException(status_code=503, detail="Tracker not available")
+    
+    try:
+        tracker.stop_tracking()
+        return {"status": "stopped"}
+    except Exception as e:
+        logger.error(f"Error stopping tracker: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/stats/daily")
