@@ -406,6 +406,190 @@ async def get_summary_stats():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/export/data")
+async def export_data(
+    start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
+    end_date: str = Query(..., description="End date in YYYY-MM-DD format")
+):
+    """
+    Get activities grouped by date -> task -> app for export
+    Returns data structured for PDF generation
+    """
+    try:
+        data = db.get_export_data(start_date, end_date)
+        return {
+            "start_date": start_date,
+            "end_date": end_date,
+            "data": data
+        }
+    except Exception as e:
+        logger.error(f"Error getting export data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/export/pdf")
+async def export_pdf(
+    start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
+    end_date: str = Query(..., description="End date in YYYY-MM-DD format")
+):
+    """Generate and download PDF report for date range"""
+    try:
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.lib import colors
+        from reportlab.lib.units import inch
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        import io
+        
+        # Get data
+        data = db.get_export_data(start_date, end_date)
+        
+        # Create PDF in memory
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
+        
+        # Container for the PDF elements
+        elements = []
+        styles = getSampleStyleSheet()
+        
+        # Custom styles
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=24,
+            textColor=colors.HexColor('#8b5cf6'),
+            spaceAfter=30,
+            alignment=TA_CENTER
+        )
+        
+        heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=styles['Heading2'],
+            fontSize=16,
+            textColor=colors.HexColor('#6366f1'),
+            spaceAfter=12,
+            spaceBefore=20
+        )
+        
+        subheading_style = ParagraphStyle(
+            'CustomSubHeading',
+            parent=styles['Heading3'],
+            fontSize=12,
+            textColor=colors.HexColor('#8b5cf6'),
+            spaceAfter=8,
+            spaceBefore=12
+        )
+        
+        # Title
+        title = Paragraph(f"Time Tracker Report", title_style)
+        elements.append(title)
+        
+        subtitle = Paragraph(f"Period: {start_date} to {end_date}", styles['Normal'])
+        elements.append(subtitle)
+        elements.append(Spacer(1, 0.3*inch))
+        
+        # Helper function to format duration
+        def format_duration(seconds):
+            if not seconds:
+                return "0m"
+            hours = seconds // 3600
+            minutes = (seconds % 3600) // 60
+            if hours > 0:
+                return f"{hours}h {minutes}m"
+            return f"{minutes}m"
+        
+        # Process each day
+        if not data:
+            elements.append(Paragraph("No activities found for this period.", styles['Normal']))
+        else:
+            for day_data in data:
+                date_str = day_data['date']
+                tasks = day_data['tasks']
+                
+                # Day heading
+                day_heading = Paragraph(f"📅 {date_str}", heading_style)
+                elements.append(day_heading)
+                
+                if not tasks:
+                    elements.append(Paragraph("No activities tracked.", styles['Normal']))
+                    elements.append(Spacer(1, 0.2*inch))
+                    continue
+                
+                # Process each task
+                for task_data in tasks:
+                    task_title = task_data['task_title']
+                    apps = task_data['apps']
+                    total_time = task_data['total_time']
+                    
+                    # Task subheading
+                    task_heading = Paragraph(
+                        f"Task: {task_title} (Total: {format_duration(total_time)})",
+                        subheading_style
+                    )
+                    elements.append(task_heading)
+                    
+                    # Create table for apps
+                    table_data = [['Application', 'Time Spent', 'Sessions']]
+                    
+                    for app in apps:
+                        table_data.append([
+                            app['app_name'],
+                            format_duration(app['duration']),
+                            str(app['session_count'])
+                        ])
+                    
+                    # Create and style table
+                    table = Table(table_data, colWidths=[3*inch, 1.5*inch, 1*inch])
+                    table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#8b5cf6')),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 10),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f3f4f6')])
+                    ]))
+                    
+                    elements.append(table)
+                    elements.append(Spacer(1, 0.15*inch))
+                
+                # Add page break after each day (except last)
+                if day_data != data[-1]:
+                    elements.append(PageBreak())
+        
+        # Build PDF
+        doc.build(elements)
+        
+        # Get PDF data
+        pdf_data = buffer.getvalue()
+        buffer.close()
+        
+        # Return PDF as download
+        from fastapi.responses import Response
+        
+        filename = f"timetracker_{start_date}_{end_date}.pdf"
+        return Response(
+            content=pdf_data,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}"
+            }
+        )
+        
+    except ImportError:
+        raise HTTPException(
+            status_code=500, 
+            detail="reportlab not installed. Run: pip install reportlab"
+        )
+    except Exception as e:
+        logger.error(f"Error generating PDF: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Serve frontend static files
 if config.FRONTEND_BUILD_PATH.exists():
     app.mount("/assets", StaticFiles(directory=config.FRONTEND_BUILD_PATH / "assets"), name="assets")
