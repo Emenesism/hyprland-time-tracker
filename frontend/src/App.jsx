@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { format, parseISO } from 'date-fns'
-import { Activity, Play, Square, Plus, Trash2, Eye, PieChart, BarChart3, ChevronDown, ChevronUp } from 'lucide-react'
+import { Activity, Play, Square, Plus, Trash2, Eye, PieChart, BarChart3, ChevronDown, ChevronUp, Download } from 'lucide-react'
 import { PieChart as RechartsPie, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import './App.css'
 
@@ -17,6 +17,14 @@ function App() {
     const [selectedTask, setSelectedTask] = useState(null)
     const [taskStats, setTaskStats] = useState(null)
     const [collapsedTimelines, setCollapsedTimelines] = useState({})
+    
+    // Initialize export dates
+    const today = new Date()
+    const weekAgo = new Date()
+    weekAgo.setDate(today.getDate() - 7)
+    
+    const [exportStartDate, setExportStartDate] = useState(format(weekAgo, 'yyyy-MM-dd'))
+    const [exportEndDate, setExportEndDate] = useState(format(today, 'yyyy-MM-dd'))
 
     useEffect(() => {
         fetchData()
@@ -122,6 +130,37 @@ function App() {
         }))
     }
 
+    const exportToPDF = async () => {
+        try {
+            const response = await fetch(
+                `${API_BASE}/export/pdf?start_date=${exportStartDate}&end_date=${exportEndDate}`,
+                { method: 'POST' }
+            )
+            
+            if (!response.ok) {
+                throw new Error('Export failed')
+            }
+
+            // Create blob from response
+            const blob = await response.blob()
+            
+            // Create download link
+            const url = window.URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `timetracker_${exportStartDate}_${exportEndDate}.pdf`
+            document.body.appendChild(a)
+            a.click()
+            
+            // Cleanup
+            window.URL.revokeObjectURL(url)
+            document.body.removeChild(a)
+        } catch (error) {
+            console.error('Error exporting PDF:', error)
+            alert('Failed to export PDF. Please try again.')
+        }
+    }
+
     const formatDuration = (seconds) => {
         if (!seconds) return '0s'
         const hours = Math.floor(seconds / 3600)
@@ -196,6 +235,40 @@ function App() {
             </header>
 
             <main className="main">
+                {/* Export Section */}
+                <div className="card export-section">
+                    <h2 className="card-title">
+                        <Download size={20} style={{ marginRight: '8px' }} />
+                        Export Report
+                    </h2>
+                    <div className="export-controls">
+                        <div className="date-range">
+                            <div className="date-input-group">
+                                <label>From:</label>
+                                <input
+                                    type="date"
+                                    value={exportStartDate}
+                                    onChange={(e) => setExportStartDate(e.target.value)}
+                                    className="date-picker"
+                                />
+                            </div>
+                            <div className="date-input-group">
+                                <label>To:</label>
+                                <input
+                                    type="date"
+                                    value={exportEndDate}
+                                    onChange={(e) => setExportEndDate(e.target.value)}
+                                    className="date-picker"
+                                />
+                            </div>
+                        </div>
+                        <button onClick={exportToPDF} className="btn btn-export">
+                            <Download size={18} />
+                            Export to PDF
+                        </button>
+                    </div>
+                </div>
+
                 <div className="card">
                     <h2 className="card-title">Current Tracking</h2>
                     {trackerStatus?.running ? (
