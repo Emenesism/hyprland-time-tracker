@@ -63,17 +63,29 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
 
+        # Tasks table - stores user-defined tasks/projects
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # Activities table - stores time tracking data
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS activities (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
                 app_name TEXT NOT NULL,
                 window_title TEXT,
                 start_time TIMESTAMP NOT NULL,
                 end_time TIMESTAMP,
                 duration INTEGER,
                 date TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
             )
         """)
 
@@ -102,12 +114,127 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_activities_start 
             ON activities(start_time)
         """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_activities_task 
+            ON activities(task_id)
+        """)
 
         conn.commit()
         conn.close()
         logger.info(f"Database initialized at {self.db_path}")
 
-    def start_activity(self, app_name: str, window_title: str) -> int:
+    def create_task(self, title: str) -> int:
+        """Create a new task"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        now = datetime.now()
+
+        cursor.execute("""
+            INSERT INTO tasks (title, created_at, updated_at)
+            VALUES (?, ?, ?)
+        """, (title, now, now))
+
+        task_id = cursor.lastrowid
+
+        conn.commit()
+        conn.close()
+
+        logger.info(f"Created task {task_id}: {title}")
+        return task_id
+
+    def get_tasks(self, limit: int = 100) -> List[Dict]:
+        """Get all tasks"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, title, created_at, updated_at
+            FROM tasks
+            ORDER BY updated_at DESC
+            LIMIT ?
+        """, (limit,))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [dict(row) for row in rows]
+
+    def get_task(self, task_id: int) -> Optional[Dict]:
+        """Get a specific task"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, title, created_at, updated_at
+            FROM tasks
+            WHERE id = ?
+        """, (task_id,))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            return dict(row)
+        return None
+
+    def delete_task(self, task_id: int) -> bool:
+        """Delete a task and its associated activities"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        # Delete task (CASCADE will delete associated activities)
+        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        deleted = cursor.rowcount > 0
+
+        conn.commit()
+        conn.close()
+
+        logger.info(f"Deleted task {task_id}")
+        return deleted
+
+    def get_task_stats(self, task_id: int) -> Dict:
+        """Get statistics for a specific task"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        # Total time for this task
+        cursor.execute("""
+            SELECT SUM(duration) as total_time, COUNT(*) as activity_count
+            FROM activities
+            WHERE task_id = ? AND duration IS NOT NULL
+        """, (task_id,))
+        
+        row = cursor.fetchone()
+        total_time = row['total_time'] or 0
+        activity_count = row['activity_count']
+
+        # App breakdown for this task
+        cursor.execute("""
+            SELECT app_name, SUM(duration) as total_duration, COUNT(*) as session_count
+            FROM activities
+            WHERE task_id = ? AND duration IS NOT NULL
+            GROUP BY app_name
+            ORDER BY total_duration DESC
+        """, (task_id,))
+
+        apps = []
+        for row in cursor.fetchall():
+            apps.append({
+                'app_name': normalize_app_name(row['app_name']),
+                'total_duration': row['total_duration'],
+                'session_count': row['session_count']
+            })
+
+        conn.close()
+
+        return {
+            'total_time': int(total_time),
+            'activity_count': activity_count,
+            'apps': apps
+        }
+
+    def start_activity(self, task_id: int, app_name: str, window_title: str) -> int:
         """Start tracking a new activity"""
         # Normalize app name so similar windows are grouped (e.g., Chrome tabs -> chrome)
         canonical_app = normalize_app_name(app_name, window_title)
@@ -119,9 +246,9 @@ class Database:
         date = now.strftime("%Y-%m-%d")
 
         cursor.execute("""
-            INSERT INTO activities (app_name, window_title, start_time, date)
-            VALUES (?, ?, ?, ?)
-        """, (canonical_app, window_title, now, date))
+            INSERT INTO activities (task_id, app_name, window_title, start_time, date)
+            VALUES (?, ?, ?, ?, ?)
+        """, (task_id, canonical_app, window_title, now, date))
 
         activity_id = cursor.lastrowid
 
@@ -136,7 +263,7 @@ class Database:
         conn.commit()
         conn.close()
 
-        logger.debug(f"Started activity {activity_id}: {canonical_app} - {window_title}")
+        logger.debug(f"Started activity {activity_id}: {canonical_app} - {window_title} for task {task_id}")
         return activity_id
 
     def end_activity(self, activity_id: int):
