@@ -17,12 +17,12 @@ function App() {
     const [selectedTask, setSelectedTask] = useState(null)
     const [taskStats, setTaskStats] = useState(null)
     const [collapsedTimelines, setCollapsedTimelines] = useState({})
-    
+
     // Initialize export dates
     const today = new Date()
     const weekAgo = new Date()
     weekAgo.setDate(today.getDate() - 7)
-    
+
     const [exportStartDate, setExportStartDate] = useState(format(weekAgo, 'yyyy-MM-dd'))
     const [exportEndDate, setExportEndDate] = useState(format(today, 'yyyy-MM-dd'))
 
@@ -136,14 +136,14 @@ function App() {
                 `${API_BASE}/export/pdf?start_date=${exportStartDate}&end_date=${exportEndDate}`,
                 { method: 'POST' }
             )
-            
+
             if (!response.ok) {
                 throw new Error('Export failed')
             }
 
             // Create blob from response
             const blob = await response.blob()
-            
+
             // Create download link
             const url = window.URL.createObjectURL(blob)
             const a = document.createElement('a')
@@ -151,7 +151,7 @@ function App() {
             a.download = `timetracker_${exportStartDate}_${exportEndDate}.pdf`
             document.body.appendChild(a)
             a.click()
-            
+
             // Cleanup
             window.URL.revokeObjectURL(url)
             document.body.removeChild(a)
