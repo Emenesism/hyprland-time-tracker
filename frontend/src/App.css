@@ -889,3 +889,81 @@
 .timeline {
     transition: all 0.3s ease;
 }
+
+/* Export section styles */
+.export-section {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.05) 0%, rgba(99, 102, 241, 0.05) 100%);
+    border: 2px solid rgba(139, 92, 246, 0.3);
+}
+
+.export-controls {
+    display: flex;
+    gap: 1.5rem;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.date-range {
+    display: flex;
+    gap: 1rem;
+    flex: 1;
+    min-width: 300px;
+}
+
+.date-input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    flex: 1;
+}
+
+.date-input-group label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #8b5cf6;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.btn-export {
+    background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
+    color: white;
+    font-weight: 600;
+    padding: 0.75rem 1.5rem;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px rgba(139, 92, 246, 0.3);
+}
+
+.btn-export:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 12px rgba(139, 92, 246, 0.4);
+    background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%);
+}
+
+.btn-export:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(139, 92, 246, 0.3);
+}
+
+@media (max-width: 768px) {
+    .export-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .date-range {
+        flex-direction: column;
+        min-width: 100%;
+    }
+    
+    .btn-export {
+        justify-content: center;
+        width: 100%;
+    }
+}
