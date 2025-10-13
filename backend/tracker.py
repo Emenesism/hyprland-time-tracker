@@ -21,6 +21,7 @@ class HyprlandTracker:
         self.database = database
         self.poll_interval = poll_interval
         self.current_activity_id = None
+        self.current_task_id = None
         self.last_app_name = None
         self.last_window_title = None
         self.running = False
@@ -88,16 +89,17 @@ class HyprlandTracker:
             # On error, assume not idle
             return False
 
-    def start_tracking(self):
-        """Start the tracking thread"""
+    def start_tracking(self, task_id: int):
+        """Start the tracking thread for a specific task"""
         if self.running:
             logger.warning("Tracker is already running")
             return
 
+        self.current_task_id = task_id
         self.running = True
         self.thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self.thread.start()
-        logger.info("Tracker started")
+        logger.info(f"Tracker started for task {task_id}")
 
     def stop_tracking(self):
         """Stop the tracking thread"""
@@ -139,15 +141,15 @@ class HyprlandTracker:
                             self.database.end_activity(self.current_activity_id)
                             logger.info(f"Switched from {self.last_app_name}")
 
-                        # Start new activity for the canonical app
+                        # Start new activity for the canonical app with current task
                         self.current_activity_id = self.database.start_activity(
-                            canonical_app, window_title
+                            self.current_task_id, canonical_app, window_title
                         )
                         self.last_app_name = canonical_app
                         # Keep last_window_title updated but do not use it for change detection
                         self.last_window_title = window_title
                         
-                        logger.info(f"Now tracking: {canonical_app} - {window_title}")
+                        logger.info(f"Now tracking: {canonical_app} - {window_title} [Task: {self.current_task_id}]")
                     else:
                         # Same normalized app; update window title but keep same activity
                         self.last_window_title = window_title
@@ -175,7 +177,8 @@ class HyprlandTracker:
             'running': self.running,
             'current_app': self.last_app_name,
             'current_window': self.last_window_title,
-            'activity_id': self.current_activity_id
+            'activity_id': self.current_activity_id,
+            'task_id': self.current_task_id
         }
 
 
@@ -187,6 +190,7 @@ class X11Tracker:
         self.database = database
         self.poll_interval = poll_interval
         self.current_activity_id = None
+        self.current_task_id = None
         self.last_app_name = None
         self.last_window_title = None
         self.running = False
@@ -243,13 +247,14 @@ class X11Tracker:
             return None
 
     # Implement the same interface as HyprlandTracker
-    def start_tracking(self):
+    def start_tracking(self, task_id: int):
         if self.running:
             return
+        self.current_task_id = task_id
         self.running = True
         self.thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self.thread.start()
-        logger.info("X11 Tracker started")
+        logger.info(f"X11 Tracker started for task {task_id}")
 
     def stop_tracking(self):
         if not self.running:
@@ -273,11 +278,11 @@ class X11Tracker:
                         if self.current_activity_id:
                             self.database.end_activity(self.current_activity_id)
                         self.current_activity_id = self.database.start_activity(
-                            canonical_app, window_title
+                            self.current_task_id, canonical_app, window_title
                         )
                         self.last_app_name = canonical_app
                         self.last_window_title = window_title
-                        logger.info(f"Tracking: {canonical_app} - {window_title}")
+                        logger.info(f"Tracking: {canonical_app} - {window_title} [Task: {self.current_task_id}]")
                     else:
                         # same normalized app; just update title
                         self.last_window_title = window_title
@@ -290,7 +295,8 @@ class X11Tracker:
             'running': self.running,
             'current_app': self.last_app_name,
             'current_window': self.last_window_title,
-            'activity_id': self.current_activity_id
+            'activity_id': self.current_activity_id,
+            'task_id': self.current_task_id
         }
 
 
