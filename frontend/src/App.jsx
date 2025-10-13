@@ -1,63 +1,125 @@
 import { useState, useEffect } from 'react'
-import {
-    BarChart, Bar, PieChart, Pie, Cell, LineChart, Line,
-    XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
-} from 'recharts'
-import { format, startOfWeek, parseISO } from 'date-fns'
-import {
-    Clock, Activity, Calendar, TrendingUp, Zap,
-    Monitor, BarChart3, PieChart as PieChartIcon
-} from 'lucide-react'
+import { format, parseISO } from 'date-fns'
+import { Activity, Play, Square, Plus, Trash2, Eye, PieChart, BarChart3, ChevronDown, ChevronUp } from 'lucide-react'
+import { PieChart as RechartsPie, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import './App.css'
 
 const API_BASE = '/api'
+const COLORS = ['#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899']
 
 function App() {
-    const [summary, setSummary] = useState(null)
-    const [dailyStats, setDailyStats] = useState([])
-    const [weeklyStats, setWeeklyStats] = useState({})
+    const [tasks, setTasks] = useState([])
     const [timeline, setTimeline] = useState([])
-    const [applications, setApplications] = useState([])
     const [trackerStatus, setTrackerStatus] = useState(null)
+    const [newTaskTitle, setNewTaskTitle] = useState('')
     const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'))
     const [loading, setLoading] = useState(true)
-    const [activeTab, setActiveTab] = useState('overview')
+    const [selectedTask, setSelectedTask] = useState(null)
+    const [taskStats, setTaskStats] = useState(null)
+    const [collapsedTimelines, setCollapsedTimelines] = useState({})
 
     useEffect(() => {
         fetchData()
-        const interval = setInterval(fetchData, 10000) // Refresh every 10 seconds
+        const interval = setInterval(fetchData, 5000)
         return () => clearInterval(interval)
     }, [selectedDate])
 
     const fetchData = async () => {
         try {
-            const [summaryRes, dailyRes, weeklyRes, timelineRes, appsRes, statusRes] = await Promise.all([
-                fetch(`${API_BASE}/stats/summary`),
-                fetch(`${API_BASE}/stats/daily?date=${selectedDate}`),
-                fetch(`${API_BASE}/stats/weekly`),
+            const [tasksRes, timelineRes, statusRes] = await Promise.all([
+                fetch(`${API_BASE}/tasks`),
                 fetch(`${API_BASE}/timeline?date=${selectedDate}`),
-                fetch(`${API_BASE}/applications`),
                 fetch(`${API_BASE}/tracker/status`),
             ])
 
-            const summaryData = await summaryRes.json()
-            const dailyData = await dailyRes.json()
-            const weeklyData = await weeklyRes.json()
+            const tasksData = await tasksRes.json()
             const timelineData = await timelineRes.json()
-            const appsData = await appsRes.json()
             const statusData = await statusRes.json()
 
-            setSummary(summaryData)
-            setDailyStats(dailyData.statistics || [])
-            setWeeklyStats(weeklyData.statistics || {})
+            setTasks(tasksData.tasks || [])
             setTimeline(timelineData.activities || [])
-            setApplications(appsData.applications || [])
             setTrackerStatus(statusData)
             setLoading(false)
         } catch (error) {
             console.error('Error fetching data:', error)
             setLoading(false)
         }
+    }
+
+    const createTask = async () => {
+        if (!newTaskTitle.trim()) return
+
+        try {
+            const response = await fetch(`${API_BASE}/tasks?title=${encodeURIComponent(newTaskTitle)}`, {
+                method: 'POST'
+            })
+
+            if (response.ok) {
+                setNewTaskTitle('')
+                fetchData()
+            }
+        } catch (error) {
+            console.error('Error creating task:', error)
+        }
+    }
+
+    const startTracking = async (taskId) => {
+        try {
+            await fetch(`${API_BASE}/tracker/start?task_id=${taskId}`, {
+                method: 'POST'
+            })
+            fetchData()
+        } catch (error) {
+            console.error('Error starting tracking:', error)
+        }
+    }
+
+    const stopTracking = async () => {
+        try {
+            await fetch(`${API_BASE}/tracker/stop`, {
+                method: 'POST'
+            })
+            fetchData()
+        } catch (error) {
+            console.error('Error stopping tracking:', error)
+        }
+    }
+
+    const deleteTask = async (taskId) => {
+        if (!confirm('Are you sure you want to delete this task? All associated activities will be removed.')) {
+            return
+        }
+
+        try {
+            await fetch(`${API_BASE}/tasks/${taskId}`, {
+                method: 'DELETE'
+            })
+            if (selectedTask?.id === taskId) {
+                setSelectedTask(null)
+                setTaskStats(null)
+            }
+            fetchData()
+        } catch (error) {
+            console.error('Error deleting task:', error)
+        }
+    }
+
+    const viewTaskDetails = async (task) => {
+        setSelectedTask(task)
+        try {
+            const response = await fetch(`${API_BASE}/tasks/${task.id}/stats`)
+            const data = await response.json()
+            setTaskStats(data.stats)
+        } catch (error) {
+            console.error('Error fetching task stats:', error)
+        }
+    }
+
+    const toggleTimeline = (taskId) => {
+        setCollapsedTimelines(prev => ({
+            ...prev,
+            [taskId]: !prev[taskId]
+        }))
     }
 
     const formatDuration = (seconds) => {
@@ -80,278 +142,275 @@ function App() {
         }
     }
 
-    const COLORS = ['#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#6366f1', '#14b8a6']
-
-    const RADIAN = Math.PI / 180
-    const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, index }) => {
-        const radius = outerRadius + 18
-        const x = cx + radius * Math.cos(-midAngle * RADIAN)
-        const y = cy + radius * Math.sin(-midAngle * RADIAN)
-        const label = dailyStats && dailyStats[index] ? dailyStats[index].app_name : ''
-        return (
-            <text x={x} y={y} fill="#ffffff" textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central" style={{ fontSize: 12 }}>
-                {`${label} ${(percent * 100).toFixed(0)}%`}
-            </text>
-        )
-    }
-
-    // Helper: slugify app name for icon filename
-    const slugify = (name) => {
-        if (!name) return 'unknown'
-        return name.toLowerCase()
-            .replace(/\s+/g, '-')
-            .replace(/[^a-z0-9\-]/g, '')
-            .replace(/-+/g, '-')
-    }
-
     const getInitials = (name) => {
         if (!name) return '??'
-        const parts = name.split(/\s+/).filter(Boolean)
-        if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
-        return (parts[0][0] + parts[1][0]).toUpperCase()
+        return name
+            .split(' ')
+            .map(word => word[0])
+            .join('')
+            .toUpperCase()
+            .slice(0, 2)
     }
 
-    const downloadFile = (filename, content, mime = 'text/plain') => {
-        const blob = new Blob([content], { type: mime })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = filename
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        URL.revokeObjectURL(url)
-    }
-
-    const exportTimelineAsCSV = () => {
-        if (!timeline || timeline.length === 0) return
-        const headers = ['start_time', 'end_time', 'duration_seconds', 'duration', 'app_name']
-        const rows = timeline.map((r) => {
-            const line = [
-                r.start_time || '',
-                r.end_time || '',
-                r.duration != null ? r.duration : '',
-                r.duration ? formatDuration(r.duration) : '',
-                r.app_name || '',
-            ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')
-            return line
-        })
-        const csv = [headers.join(','), ...rows].join('\n')
-        downloadFile(`timeline-${selectedDate}.csv`, csv, 'text/csv')
-    }
-
-    const exportTimelineAsJSON = () => {
-        const data = {
-            date: selectedDate,
-            exported_at: new Date().toISOString(),
-            activities: timeline
+    const timelineByTask = timeline.reduce((acc, activity) => {
+        const taskId = activity.task_id || 'unknown'
+        if (!acc[taskId]) {
+            acc[taskId] = []
         }
-        downloadFile(`timeline-${selectedDate}.json`, JSON.stringify(data, null, 2), 'application/json')
-    }
+        acc[taskId].push(activity)
+        return acc
+    }, {})
 
     if (loading) {
         return (
             <div className="app">
-                <div className="loading">
-                    <Zap size={48} className="loading-icon" />
-                    <p>Loading Time Tracker...</p>
-                </div>
+                <div className="loading">Loading...</div>
             </div>
         )
     }
 
     return (
         <div className="app">
-            {/* Header */}
             <header className="header">
                 <div className="header-content">
-                    <div className="header-left">
-                        <Clock size={32} className="logo-icon" />
-                        <h1>Time Tracker</h1>
+                    <div>
+                        <h1>
+                            <Activity className="icon" />
+                            Time Tracker
+                        </h1>
+                        <p>Manual Task-Based Tracking</p>
                     </div>
-                    <div className="header-right">
-                        {trackerStatus && (
-                            <div className={`tracker-status ${trackerStatus.running ? 'active' : 'inactive'}`}>
-                                <div className="status-dot"></div>
-                                <span>
-                                    {trackerStatus.running
-                                        ? trackerStatus.current_app || 'Tracking...'
-                                        : 'Inactive'}
-                                </span>
+                    <div className="tracker-status">
+                        {trackerStatus?.running ? (
+                            <div className="status-badge status-active">
+                                <div className="pulse"></div>
+                                Tracking Active
+                            </div>
+                        ) : (
+                            <div className="status-badge status-inactive">
+                                Inactive
                             </div>
                         )}
                     </div>
                 </div>
             </header>
 
-            {/* Navigation Tabs */}
-            <div className="tabs">
-                <button
-                    className={`tab ${activeTab === 'overview' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('overview')}
-                >
-                    <TrendingUp size={18} />
-                    Overview
-                </button>
-                <button
-                    className={`tab ${activeTab === 'daily' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('daily')}
-                >
-                    <Calendar size={18} />
-                    Daily
-                </button>
-                <button
-                    className={`tab ${activeTab === 'weekly' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('weekly')}
-                >
-                    <BarChart3 size={18} />
-                    Weekly
-                </button>
-                <button
-                    className={`tab ${activeTab === 'apps' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('apps')}
-                >
-                    <Monitor size={18} />
-                    Applications
-                </button>
-            </div>
-
-            {/* Main Content */}
-            <main className="main-content">
-                {/* Overview Tab */}
-                {activeTab === 'overview' && summary && (
-                    <div className="overview-tab">
-                        {/* Summary Cards */}
-                        <div className="stats-grid">
-                            <div className="stat-card purple">
-                                <div className="stat-icon">
-                                    <Clock size={24} />
-                                </div>
-                                <div className="stat-content">
-                                    <h3>Total Time Tracked</h3>
-                                    <p className="stat-value">{formatDuration(summary.total_time)}</p>
-                                </div>
+            <main className="main">
+                <div className="card">
+                    <h2 className="card-title">Current Tracking</h2>
+                    {trackerStatus?.running ? (
+                        <div className="current-tracking">
+                            <div className="tracking-info">
+                                <p><strong>Task ID:</strong> {trackerStatus.task_id}</p>
+                                <p><strong>Current App:</strong> {trackerStatus.current_app || 'None'}</p>
+                                <p><strong>Window:</strong> {trackerStatus.current_window || 'N/A'}</p>
                             </div>
-
-                            <div className="stat-card cyan">
-                                <div className="stat-icon">
-                                    <Activity size={24} />
-                                </div>
-                                <div className="stat-content">
-                                    <h3>Today's Activity</h3>
-                                    <p className="stat-value">{formatDuration(summary.today_time)}</p>
-                                </div>
-                            </div>
-
-                            <div className="stat-card green">
-                                <div className="stat-icon">
-                                    <TrendingUp size={24} />
-                                </div>
-                                <div className="stat-content">
-                                    <h3>This Week</h3>
-                                    <p className="stat-value">{formatDuration(summary.week_time)}</p>
-                                </div>
-                            </div>
-
-                            <div className="stat-card orange">
-                                <div className="stat-icon">
-                                    <Monitor size={24} />
-                                </div>
-                                <div className="stat-content">
-                                    <h3>Applications</h3>
-                                    <p className="stat-value">{summary.total_applications}</p>
-                                </div>
-                            </div>
+                            <button onClick={stopTracking} className="btn btn-danger">
+                                <Square size={18} />
+                                Stop Tracking
+                            </button>
                         </div>
+                    ) : (
+                        <p className="no-tracking">No active tracking. Start a task below.</p>
+                    )}
+                </div>
 
-                        {/* Top Applications Today */}
-                        <div className="card">
-                            <h2 className="card-title">Top Applications Today</h2>
-                            <div className="chart-container">
-                                <ResponsiveContainer width="100%" height={300}>
-                                    <BarChart data={dailyStats.slice(0, 10)}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                                        <XAxis dataKey="app_name" stroke="#888" />
-                                        <YAxis stroke="#888" tickFormatter={(value) => formatDuration(value)} />
-                                        <Tooltip
-                                            contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333' }}
-                                            formatter={(value) => formatDuration(value)}
-                                        />
-                                        <Bar dataKey="total_duration" fill="#8b5cf6" radius={[8, 8, 0, 0]} />
-                                    </BarChart>
-                                </ResponsiveContainer>
-                            </div>
-                        </div>
+                <div className="card">
+                    <h2 className="card-title">Tasks</h2>
 
-                        {/* Time Distribution Pie Chart */}
-                        <div className="card">
-                            <h2 className="card-title">Time Distribution Today</h2>
-                            <div className="chart-container">
-                                <ResponsiveContainer width="100%" height={300}>
-                                    <PieChart>
-                                        <Pie
-                                            data={dailyStats.slice(0, 8)}
-                                            dataKey="total_duration"
-                                            nameKey="app_name"
-                                            cx="50%"
-                                            cy="50%"
-                                            innerRadius={60}
-                                            outerRadius={100}
-                                            paddingAngle={6}
-                                            labelLine={false}
-                                            label={renderCustomizedLabel}
+                    <div className="create-task">
+                        <input
+                            type="text"
+                            placeholder="Enter task title..."
+                            value={newTaskTitle}
+                            onChange={(e) => setNewTaskTitle(e.target.value)}
+                            onKeyPress={(e) => e.key === 'Enter' && createTask()}
+                            className="task-input"
+                        />
+                        <button onClick={createTask} className="btn btn-primary">
+                            <Plus size={18} />
+                            Create Task
+                        </button>
+                    </div>
+
+                    <div className="tasks-list">
+                        {tasks.length === 0 ? (
+                            <p className="no-data">No tasks yet. Create one to start tracking!</p>
+                        ) : (
+                            tasks.map((task) => (
+                                <div key={task.id} className="task-card-item">
+                                    <div className="task-info">
+                                        <h3>{task.title}</h3>
+                                        <p className="task-meta">
+                                            Created: {format(parseISO(task.created_at), 'MMM dd, yyyy HH:mm')}
+                                        </p>
+                                    </div>
+                                    <div className="task-actions">
+                                        <button
+                                            onClick={() => viewTaskDetails(task)}
+                                            className="btn btn-info"
+                                            title="View Details"
                                         >
-                                            {dailyStats.slice(0, 8).map((entry, index) => (
-                                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                            ))}
-                                        </Pie>
-                                        <Tooltip
-                                            contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333' }}
-                                            formatter={(value) => formatDuration(value)}
-                                        />
-                                        <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ color: '#fff' }} />
-                                    </PieChart>
-                                </ResponsiveContainer>
-                            </div>
+                                            <Eye size={18} />
+                                        </button>
+                                        <button
+                                            onClick={() => startTracking(task.id)}
+                                            className="btn btn-success"
+                                            disabled={trackerStatus?.running && trackerStatus?.task_id === task.id}
+                                        >
+                                            <Play size={18} />
+                                            {trackerStatus?.running && trackerStatus?.task_id === task.id ? 'Active' : 'Start'}
+                                        </button>
+                                        <button
+                                            onClick={() => deleteTask(task.id)}
+                                            className="btn btn-danger-outline"
+                                            title="Delete Task"
+                                        >
+                                            <Trash2 size={18} />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+
+                {/* Task Details Modal/Panel */}
+                {selectedTask && (
+                    <div className="card task-details-card">
+                        <div className="card-header">
+                            <h2 className="card-title">
+                                <Activity size={20} style={{ marginRight: '8px' }} />
+                                {selectedTask.title}
+                            </h2>
+                            <button onClick={() => {setSelectedTask(null); setTaskStats(null)}} className="btn btn-secondary">
+                                Close
+                            </button>
                         </div>
+
+                        {taskStats && (
+                            <>
+                                <div className="stats-summary">
+                                    <div className="stat-box">
+                                        <h4>Total Time</h4>
+                                        <p className="stat-value">{formatDuration(taskStats.total_time)}</p>
+                                    </div>
+                                    <div className="stat-box">
+                                        <h4>Activities</h4>
+                                        <p className="stat-value">{taskStats.activity_count}</p>
+                                    </div>
+                                    <div className="stat-box">
+                                        <h4>Apps Used</h4>
+                                        <p className="stat-value">{taskStats.apps.length}</p>
+                                    </div>
+                                </div>
+
+                                {taskStats.apps.length > 0 && (
+                                    <>
+                                        <h3 className="section-title">
+                                            <PieChart size={20} />
+                                            Time Distribution by App
+                                        </h3>
+                                        <div className="chart-container">
+                                            <ResponsiveContainer width="100%" height={300}>
+                                                <RechartsPie>
+                                                    <Pie
+                                                        data={taskStats.apps}
+                                                        dataKey="total_duration"
+                                                        nameKey="app_name"
+                                                        cx="50%"
+                                                        cy="50%"
+                                                        outerRadius={80}
+                                                        label={(entry) => `${entry.app_name}: ${Math.round((entry.total_duration / taskStats.total_time) * 100)}%`}
+                                                    >
+                                                        {taskStats.apps.map((entry, index) => (
+                                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                                        ))}
+                                                    </Pie>
+                                                    <Tooltip formatter={(value) => formatDuration(value)} />
+                                                </RechartsPie>
+                                            </ResponsiveContainer>
+                                        </div>
+
+                                        <h3 className="section-title">
+                                            <BarChart3 size={20} />
+                                            App Usage Details
+                                        </h3>
+                                        <div className="chart-container">
+                                            <ResponsiveContainer width="100%" height={300}>
+                                                <BarChart data={taskStats.apps}>
+                                                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff20" />
+                                                    <XAxis dataKey="app_name" stroke="#ffffff80" />
+                                                    <YAxis stroke="#ffffff80" tickFormatter={(value) => formatDuration(value)} />
+                                                    <Tooltip formatter={(value) => formatDuration(value)} />
+                                                    <Bar dataKey="total_duration" fill="#8b5cf6" />
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+
+                                        <h3 className="section-title">Application Breakdown</h3>
+                                        <div className="apps-breakdown">
+                                            {taskStats.apps.map((app, idx) => (
+                                                <div key={idx} className="app-breakdown-item">
+                                                    <div className="app-breakdown-info">
+                                                        <div className="app-breakdown-icon" style={{ backgroundColor: COLORS[idx % COLORS.length] }}>
+                                                            {getInitials(app.app_name)}
+                                                        </div>
+                                                        <div>
+                                                            <h4>{app.app_name}</h4>
+                                                            <p>{app.session_count} session{app.session_count > 1 ? 's' : ''}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="app-breakdown-time">
+                                                        {formatDuration(app.total_duration)}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </>
+                                )}
+                            </>
+                        )}
                     </div>
                 )}
 
-                {/* Daily Tab */}
-                {activeTab === 'daily' && (
-                    <div className="daily-tab">
-                        <div className="date-selector">
-                            <label htmlFor="date-input">Select Date:</label>
-                            <input
-                                id="date-input"
-                                type="date"
-                                value={selectedDate}
-                                onChange={(e) => setSelectedDate(e.target.value)}
-                                max={format(new Date(), 'yyyy-MM-dd')}
-                            />
-                        </div>
+                <div className="card">
+                    <div className="card-header">
+                        <h2 className="card-title">Timeline for {selectedDate}</h2>
+                        <input
+                            type="date"
+                            value={selectedDate}
+                            onChange={(e) => setSelectedDate(e.target.value)}
+                            className="date-picker"
+                        />
+                    </div>
 
-                        <div className="card">
-                            <div className="card-header">
-                                <h2 className="card-title">Activity Timeline - {selectedDate}</h2>
-                                <div className="export-controls">
-                                    <button className="export-btn" onClick={exportTimelineAsCSV}>Export CSV</button>
-                                    <button className="export-btn" onClick={exportTimelineAsJSON}>Export JSON</button>
-                                </div>
-                            </div>
-                            <div className="timeline-container">
-                                {timeline.length === 0 ? (
-                                    <p className="no-data">No activities recorded for this date.</p>
-                                ) : (
-                                    <div className="timeline-list">
-                                        {timeline.map((activity) => {
-                                            const slug = slugify(activity.app_name)
-                                            const iconUrl = `/assets/icons/${slug}.png`
-                                            return (
+                    {Object.keys(timelineByTask).length === 0 ? (
+                        <p className="no-data">No activities tracked yet.</p>
+                    ) : (
+                        Object.entries(timelineByTask).map(([taskId, activities]) => {
+                            const task = tasks.find(t => t.id === parseInt(taskId))
+                            const isCollapsed = collapsedTimelines[taskId]
+                            return (
+                                <div key={taskId} className="task-timeline">
+                                    <div className="timeline-task-header">
+                                        <h3 className="timeline-task-title">
+                                            Task: {task?.title || `ID ${taskId}`} ({activities.length} activities)
+                                        </h3>
+                                        <button
+                                            onClick={() => toggleTimeline(taskId)}
+                                            className="btn btn-secondary btn-collapse"
+                                            title={isCollapsed ? 'Expand' : 'Collapse'}
+                                        >
+                                            {isCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+                                        </button>
+                                    </div>
+                                    {!isCollapsed && (
+                                        <div className="timeline">
+                                            {activities.map((activity) => (
                                                 <div key={activity.id} className="timeline-item">
                                                     <div className="timeline-time">{formatTime(activity.start_time)}</div>
                                                     <div className="timeline-icon">
-                                                        <img src={iconUrl} alt={activity.app_name} onError={(e) => { e.currentTarget.style.display = 'none' }} />
                                                         <div className="timeline-initials">{getInitials(activity.app_name)}</div>
                                                     </div>
                                                     <div className="timeline-content">
@@ -361,132 +420,18 @@ function App() {
                                                         )}
                                                     </div>
                                                 </div>
-                                            )
-                                        })}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="card">
-                            <h2 className="card-title">Daily Statistics - {selectedDate}</h2>
-                            <div className="stats-table">
-                                <table>
-                                    <thead>
-                                        <tr>
-                                            <th>Application</th>
-                                            <th>Sessions</th>
-                                            <th>Total Time</th>
-                                            <th>Avg Time</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {dailyStats.map((stat, index) => (
-                                            <tr key={index}>
-                                                <td><strong>{stat.app_name}</strong></td>
-                                                <td>{stat.session_count}</td>
-                                                <td>{formatDuration(stat.total_duration)}</td>
-                                                <td>{formatDuration(stat.avg_duration)}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* Weekly Tab */}
-                {activeTab === 'weekly' && (
-                    <div className="weekly-tab">
-                        <div className="card">
-                            <h2 className="card-title">Weekly Activity Trend</h2>
-                            <div className="chart-container">
-                                {Object.keys(weeklyStats).length === 0 ? (
-                                    <p className="no-data">No weekly data available.</p>
-                                ) : (
-                                    <ResponsiveContainer width="100%" height={400}>
-                                        <LineChart
-                                            data={Object.entries(weeklyStats).map(([date, apps]) => ({
-                                                date,
-                                                total: apps.reduce((sum, app) => sum + app.total_duration, 0)
-                                            })).reverse()}
-                                        >
-                                            <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                                            <XAxis dataKey="date" stroke="#888" />
-                                            <YAxis stroke="#888" tickFormatter={(value) => formatDuration(value)} />
-                                            <Tooltip
-                                                contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333' }}
-                                                formatter={(value) => formatDuration(value)}
-                                            />
-                                            <Line
-                                                type="monotone"
-                                                dataKey="total"
-                                                stroke="#8b5cf6"
-                                                strokeWidth={2}
-                                                dot={{ fill: '#8b5cf6', r: 4 }}
-                                            />
-                                        </LineChart>
-                                    </ResponsiveContainer>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="card">
-                            <h2 className="card-title">Weekly Breakdown by Application</h2>
-                            <div className="weekly-breakdown">
-                                {Object.entries(weeklyStats).reverse().map(([date, apps]) => (
-                                    <div key={date} className="weekly-day">
-                                        <h3>{date}</h3>
-                                        <div className="weekly-apps">
-                                            {apps.slice(0, 5).map((app, index) => (
-                                                <div key={index} className="weekly-app-item">
-                                                    <span className="app-name">{app.app_name}</span>
-                                                    <span className="app-time">{formatDuration(app.total_duration)}</span>
-                                                </div>
                                             ))}
                                         </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* Applications Tab */}
-                {activeTab === 'apps' && (
-                    <div className="apps-tab">
-                        <div className="card">
-                            <h2 className="card-title">All Applications</h2>
-                            <div className="apps-grid">
-                                {applications.map((app, index) => {
-                                    const slug = slugify(app.app_name)
-                                    const iconUrl = `/assets/icons/${slug}.png`
-                                    return (
-                                        <div key={index} className="app-card">
-                                            <div className="app-icon">
-                                                <img src={iconUrl} alt={app.app_name} onError={(e) => { e.currentTarget.style.display = 'none' }} />
-                                                <div className="app-initials">{getInitials(app.app_name)}</div>
-                                            </div>
-                                            <div className="app-info">
-                                                <h3>{app.app_name}</h3>
-                                                <p className="app-time">{formatDuration(app.total_time)}</p>
-                                                {app.last_used && (
-                                                    <p className="app-last-used">Last used: {format(parseISO(app.last_used), 'MMM dd, HH:mm')}</p>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )
-                                })}
-                            </div>
-                        </div>
-                    </div>
-                )}
+                                    )}
+                                </div>
+                            )
+                        })
+                    )}
+                </div>
             </main>
 
-            {/* Footer */}
             <footer className="footer">
-                <p>Time Tracker for Arch Linux + Hyprland | All data stored locally</p>
+                <p>Time Tracker for Arch Linux + Hyprland | Manual Task-Based Tracking</p>
             </footer>
         </div>
     )
