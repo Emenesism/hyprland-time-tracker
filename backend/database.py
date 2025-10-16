@@ -68,6 +68,7 @@ class Database:
             CREATE TABLE IF NOT EXISTS tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
+                description TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -123,7 +124,7 @@ class Database:
         conn.close()
         logger.info(f"Database initialized at {self.db_path}")
 
-    def create_task(self, title: str) -> int:
+    def create_task(self, title: str, description: str = None) -> int:
         """Create a new task"""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -131,9 +132,9 @@ class Database:
         now = datetime.now()
 
         cursor.execute("""
-            INSERT INTO tasks (title, created_at, updated_at)
-            VALUES (?, ?, ?)
-        """, (title, now, now))
+            INSERT INTO tasks (title, description, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+        """, (title, description, now, now))
 
         task_id = cursor.lastrowid
 
@@ -149,7 +150,7 @@ class Database:
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT id, title, created_at, updated_at
+            SELECT id, title, description, created_at, updated_at
             FROM tasks
             ORDER BY updated_at DESC
             LIMIT ?
@@ -166,7 +167,7 @@ class Database:
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT id, title, created_at, updated_at
+            SELECT id, title, description, created_at, updated_at
             FROM tasks
             WHERE id = ?
         """, (task_id,))
@@ -648,6 +649,7 @@ class Database:
                 a.date,
                 a.task_id,
                 t.title as task_title,
+                t.description as task_description,
                 a.app_name,
                 a.window_title,
                 a.duration
@@ -668,6 +670,7 @@ class Database:
             date = row['date']
             task_id = row['task_id']
             task_title = row['task_title'] or f"Task {task_id}"
+            task_description = row['task_description']
             app_name = normalize_app_name(row['app_name'], row['window_title'])
             duration = row['duration']
 
@@ -678,6 +681,7 @@ class Database:
             if task_id not in data_structure[date]:
                 data_structure[date][task_id] = {
                     'task_title': task_title,
+                    'task_description': task_description,
                     'apps': {}
                 }
             
@@ -702,6 +706,7 @@ class Database:
                 task_data = {
                     'task_id': task_id,
                     'task_title': task_info['task_title'],
+                    'task_description': task_info['task_description'],
                     'apps': [],
                     'total_time': 0
                 }
