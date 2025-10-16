@@ -1,22 +1,81 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { format, parseISO } from 'date-fns'
 import { Activity, Play, Square, Plus, Trash2, Eye, PieChart, BarChart3, ChevronDown, ChevronUp, Download } from 'lucide-react'
-import { PieChart as RechartsPie, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { PieChart as RechartsPie, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import './App.css'
 
 const API_BASE = '/api'
 const COLORS = ['#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899']
+const RADIAN = Math.PI / 180
 
 function App() {
     const [tasks, setTasks] = useState([])
     const [timeline, setTimeline] = useState([])
     const [trackerStatus, setTrackerStatus] = useState(null)
     const [newTaskTitle, setNewTaskTitle] = useState('')
+    const [newTaskDescription, setNewTaskDescription] = useState('')
     const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'))
     const [loading, setLoading] = useState(true)
     const [selectedTask, setSelectedTask] = useState(null)
     const [taskStats, setTaskStats] = useState(null)
     const [collapsedTimelines, setCollapsedTimelines] = useState({})
+    const pieLabelRenderer = useMemo(() => {
+        if (!taskStats || !taskStats.apps?.length) {
+            return () => null
+        }
+
+        const lastY = { left: null, right: null }
+        const minGap = 20
+
+        return ({ cx, cy, midAngle, outerRadius, percent, payload }) => {
+            if (!payload || percent === 0) {
+                return null
+            }
+
+            const baseRadius = outerRadius + 26
+            let x = cx + baseRadius * Math.cos(-midAngle * RADIAN)
+            let y = cy + baseRadius * Math.sin(-midAngle * RADIAN)
+
+            const side = x >= cx ? 'right' : 'left'
+
+            if (lastY[side] !== null && Math.abs(y - lastY[side]) < minGap) {
+                const offset = (minGap - Math.abs(y - lastY[side])) * (y >= lastY[side] ? 1 : -1)
+                y += offset
+            }
+
+            lastY[side] = y
+
+            const connectorOuter = outerRadius + 10
+            const startX = cx + outerRadius * Math.cos(-midAngle * RADIAN)
+            const startY = cy + outerRadius * Math.sin(-midAngle * RADIAN)
+            const midX = cx + connectorOuter * Math.cos(-midAngle * RADIAN)
+            const midY = cy + connectorOuter * Math.sin(-midAngle * RADIAN)
+            const endX = x > cx ? x - 6 : x + 6
+
+            const percentage = Math.round(percent * 100)
+            const label = `${payload.app_name}: ${percentage}%`
+
+            return (
+                <g className="pie-label-group">
+                    <polyline
+                        className="pie-label-line"
+                        points={`${startX},${startY} ${midX},${midY} ${endX},${y}`}
+                    />
+                    <circle cx={endX} cy={y} r={2} className="pie-label-dot" />
+                    <text
+                        x={x}
+                        y={y}
+                        fill="#ffffff"
+                        textAnchor={side === 'right' ? 'start' : 'end'}
+                        dominantBaseline="central"
+                        className="pie-label-text"
+                    >
+                        {label}
+                    </text>
+                </g>
+            )
+        }
+    }, [taskStats])
 
     // Initialize export dates
     const today = new Date()
@@ -58,12 +117,19 @@ function App() {
         if (!newTaskTitle.trim()) return
 
         try {
-            const response = await fetch(`${API_BASE}/tasks?title=${encodeURIComponent(newTaskTitle)}`, {
+            const url = new URL(`${API_BASE}/tasks`, window.location.origin)
+            url.searchParams.append('title', newTaskTitle)
+            if (newTaskDescription.trim()) {
+                url.searchParams.append('description', newTaskDescription)
+            }
+
+            const response = await fetch(url.toString(), {
                 method: 'POST'
             })
 
             if (response.ok) {
                 setNewTaskTitle('')
+                setNewTaskDescription('')
                 fetchData()
             }
         } catch (error) {
@@ -292,14 +358,23 @@ function App() {
                     <h2 className="card-title">Tasks</h2>
 
                     <div className="create-task">
-                        <input
-                            type="text"
-                            placeholder="Enter task title..."
-                            value={newTaskTitle}
-                            onChange={(e) => setNewTaskTitle(e.target.value)}
-                            onKeyPress={(e) => e.key === 'Enter' && createTask()}
-                            className="task-input"
-                        />
+                        <div className="task-input-group">
+                            <input
+                                type="text"
+                                placeholder="Enter task name..."
+                                value={newTaskTitle}
+                                onChange={(e) => setNewTaskTitle(e.target.value)}
+                                onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && createTask()}
+                                className="task-input"
+                            />
+                            <textarea
+                                placeholder="Enter task description (optional)..."
+                                value={newTaskDescription}
+                                onChange={(e) => setNewTaskDescription(e.target.value)}
+                                className="task-description-input"
+                                rows="2"
+                            />
+                        </div>
                         <button onClick={createTask} className="btn btn-primary">
                             <Plus size={18} />
                             Create Task
@@ -314,6 +389,9 @@ function App() {
                                 <div key={task.id} className="task-card-item">
                                     <div className="task-info">
                                         <h3>{task.title}</h3>
+                                        {task.description && (
+                                            <p className="task-description">{task.description}</p>
+                                        )}
                                         <p className="task-meta">
                                             Created: {format(parseISO(task.created_at), 'MMM dd, yyyy HH:mm')}
                                         </p>
@@ -385,7 +463,7 @@ function App() {
                                             Time Distribution by App
                                         </h3>
                                         <div className="chart-container">
-                                            <ResponsiveContainer width="100%" height={300}>
+                                            <ResponsiveContainer width="100%" height={340}>
                                                 <RechartsPie>
                                                     <Pie
                                                         data={taskStats.apps}
@@ -393,8 +471,11 @@ function App() {
                                                         nameKey="app_name"
                                                         cx="50%"
                                                         cy="50%"
-                                                        outerRadius={80}
-                                                        label={(entry) => `${entry.app_name}: ${Math.round((entry.total_duration / taskStats.total_time) * 100)}%`}
+                                                        innerRadius={30}
+                                                        outerRadius={100}
+                                                        labelLine={false}
+                                                        label={pieLabelRenderer}
+                                                        paddingAngle={2}
                                                     >
                                                         {taskStats.apps.map((entry, index) => (
                                                             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
