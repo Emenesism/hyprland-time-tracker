@@ -99,6 +99,7 @@ class TrackerStatusResponse(BaseModel):
 class TaskResponse(BaseModel):
     id: int
     title: str
+    description: Optional[str]
     created_at: str
     updated_at: str
 
@@ -166,10 +167,10 @@ async def get_tracker_status():
 
 # Task Management Endpoints
 @app.post("/api/tasks", response_model=TaskResponse)
-async def create_task(title: str):
+async def create_task(title: str, description: Optional[str] = None):
     """Create a new task"""
     try:
-        task_id = db.create_task(title)
+        task_id = db.create_task(title, description)
         task = db.get_task(task_id)
         return task
     except Exception as e:
@@ -519,15 +520,25 @@ async def export_pdf(
                 # Process each task
                 for task_data in tasks:
                     task_title = task_data['task_title']
+                    task_description = task_data.get('task_description')
                     apps = task_data['apps']
                     total_time = task_data['total_time']
                     
-                    # Task subheading
+                    # Task subheading with title
                     task_heading = Paragraph(
                         f"Task: {task_title} (Total: {format_duration(total_time)})",
                         subheading_style
                     )
                     elements.append(task_heading)
+                    
+                    # Add task description if available
+                    if task_description:
+                        description_para = Paragraph(
+                            f"<i>{task_description}</i>",
+                            styles['Normal']
+                        )
+                        elements.append(description_para)
+                        elements.append(Spacer(1, 0.1*inch))
                     
                     # Create table for apps
                     table_data = [['Application', 'Time Spent', 'Sessions']]
