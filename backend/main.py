@@ -86,6 +86,7 @@ class SummaryStatsResponse(BaseModel):
     total_activities: int
     today_time: int
     week_time: int
+    last_30_days_time: int
 
 
 class TrackerStatusResponse(BaseModel):

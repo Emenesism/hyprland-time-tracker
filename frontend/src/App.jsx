@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { format, parseISO } from 'date-fns'
-import { Activity, Play, Square, Plus, Trash2, Eye, PieChart, BarChart3, ChevronDown, ChevronUp, Download } from 'lucide-react'
+import { Activity, Play, Square, Plus, Trash2, Eye, PieChart, BarChart3, ChevronDown, ChevronUp, Download, Calendar } from 'lucide-react'
 import { PieChart as RechartsPie, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import './App.css'
 
@@ -11,6 +11,7 @@ const RADIAN = Math.PI / 180
 function App() {
     const [tasks, setTasks] = useState([])
     const [timeline, setTimeline] = useState([])
+    const [summaryStats, setSummaryStats] = useState(null)
     const [trackerStatus, setTrackerStatus] = useState(null)
     const [newTaskTitle, setNewTaskTitle] = useState('')
     const [newTaskDescription, setNewTaskDescription] = useState('')
@@ -93,22 +94,26 @@ function App() {
 
     const fetchData = async () => {
         try {
-            const [tasksRes, timelineRes, statusRes] = await Promise.all([
+            const [tasksRes, timelineRes, statusRes, summaryRes] = await Promise.all([
                 fetch(`${API_BASE}/tasks`),
                 fetch(`${API_BASE}/timeline?date=${selectedDate}`),
                 fetch(`${API_BASE}/tracker/status`),
+                fetch(`${API_BASE}/stats/summary`),
             ])
 
             const tasksData = await tasksRes.json()
             const timelineData = await timelineRes.json()
             const statusData = await statusRes.json()
+            const summaryData = await summaryRes.json()
 
             setTasks(tasksData.tasks || [])
             setTimeline(timelineData.activities || [])
             setTrackerStatus(statusData)
+            setSummaryStats(summaryData)
             setLoading(false)
         } catch (error) {
             console.error('Error fetching data:', error)
+            setSummaryStats(null)
             setLoading(false)
         }
     }
@@ -238,6 +243,13 @@ function App() {
         return `${secs}s`
     }
 
+    const formatHours = (seconds, precision = 1) => {
+        if (!seconds) return '0'
+        const hours = seconds / 3600
+        const digits = hours >= 10 ? precision : Math.max(precision, 2)
+        return parseFloat(hours.toFixed(digits)).toString()
+    }
+
     const formatTime = (timestamp) => {
         if (!timestamp) return 'N/A'
         try {
@@ -274,6 +286,10 @@ function App() {
         )
     }
 
+    const last30DaysSeconds = summaryStats?.last_30_days_time ?? 0
+    const last30DaysHours = formatHours(last30DaysSeconds)
+    const last30DaysAverageHours = last30DaysSeconds ? formatHours(last30DaysSeconds / 30) : '0'
+
     return (
         <div className="app">
             <header className="header">
@@ -301,6 +317,25 @@ function App() {
             </header>
 
             <main className="main">
+                {summaryStats && (
+                    <div className="card highlight-card">
+                        <div className="highlight-main">
+                            <div className="highlight-icon">
+                                <Calendar size={32} />
+                            </div>
+                            <div>
+                                <p className="highlight-label">Last 30 Days</p>
+                                <p className="highlight-value">{last30DaysHours} hrs</p>
+                                <p className="highlight-muted">{formatDuration(last30DaysSeconds)} tracked</p>
+                            </div>
+                        </div>
+                        <div className="highlight-meta">
+                            <span className="highlight-meta-label">Avg / day</span>
+                            <span className="highlight-meta-value">{last30DaysAverageHours} hrs</span>
+                        </div>
+                    </div>
+                )}
+
                 {/* Export Section */}
                 <div className="card export-section">
                     <h2 className="card-title">

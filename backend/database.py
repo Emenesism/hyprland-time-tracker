@@ -607,6 +607,15 @@ class Database:
         """, (week_start,))
         week_time = cursor.fetchone()['week_time'] or 0
 
+        # Last 30 days time
+        last_30_start = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        cursor.execute("""
+            SELECT SUM(duration) as last_30_days_time
+            FROM activities
+            WHERE date >= ? AND duration IS NOT NULL
+        """, (last_30_start,))
+        last_30_days_time = cursor.fetchone()['last_30_days_time'] or 0
+
         conn.close()
 
         return {
@@ -614,7 +623,8 @@ class Database:
             'total_applications': total_apps,
             'total_activities': total_activities,
             'today_time': int(today_time),
-            'week_time': int(week_time)
+            'week_time': int(week_time),
+            'last_30_days_time': int(last_30_days_time)
         }
 
     def cleanup_old_data(self, days: int = 90):
