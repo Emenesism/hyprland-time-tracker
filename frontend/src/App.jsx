@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { format, parseISO } from 'date-fns'
-import { Activity, Play, Square, Plus, Trash2, Eye, PieChart, BarChart3, ChevronDown, ChevronUp, Download, Calendar, Folder, FolderPlus, FolderOpen, Edit2, ArrowLeft, ChevronRight } from 'lucide-react'
+import { Activity, Play, Square, Plus, Trash2, Eye, PieChart, BarChart3, Download, Calendar, Folder, FolderPlus, FolderOpen, Edit2, ArrowLeft, ChevronRight, Clock3 } from 'lucide-react'
 import { PieChart as RechartsPie, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import './App.css'
 
@@ -25,9 +25,13 @@ function App() {
     const [loading, setLoading] = useState(true)
     const [selectedTask, setSelectedTask] = useState(null)
     const [taskStats, setTaskStats] = useState(null)
-    const [collapsedTimelines, setCollapsedTimelines] = useState({})
 
-    const defaultFolderId = useMemo(() => (folders.length > 0 ? folders[0].id : null), [folders])
+    const taskTimeline = useMemo(() => {
+        if (!selectedTask) return []
+        return timeline
+            .filter(activity => activity.task_id === selectedTask.id)
+            .sort((a, b) => new Date(b.start_time) - new Date(a.start_time))
+    }, [selectedTask, timeline])
 
     const pieLabelRenderer = useMemo(() => {
         if (!taskStats || !taskStats.apps?.length) {
@@ -103,38 +107,42 @@ function App() {
 
     const fetchData = async () => {
         try {
-            const workloadPromise = selectedFolderId === null
-                ? fetch(`${API_BASE}/timeline?date=${selectedDate}`)
-                : fetch(`${API_BASE}/tasks?folder_id=${selectedFolderId}`)
+            const tasksPromise = selectedFolderId !== null
+                ? fetch(`${API_BASE}/tasks?folder_id=${selectedFolderId}`)
+                : Promise.resolve(null)
 
-            const [statusRes, summaryRes, foldersRes, workloadRes] = await Promise.all([
+            const [statusRes, summaryRes, foldersRes, timelineRes, tasksRes] = await Promise.all([
                 fetch(`${API_BASE}/tracker/status`),
                 fetch(`${API_BASE}/stats/summary`),
                 fetch(`${API_BASE}/folders`),
-                workloadPromise
+                fetch(`${API_BASE}/timeline?date=${selectedDate}`),
+                tasksPromise
             ])
 
-            if (![statusRes, summaryRes, foldersRes, workloadRes].every(res => res.ok)) {
+            const responses = [statusRes, summaryRes, foldersRes, timelineRes]
+            if (!responses.every(res => res.ok) || (tasksRes && !tasksRes.ok)) {
                 throw new Error('Failed to fetch data')
             }
 
-            const statusData = await statusRes.json()
-            const summaryData = await summaryRes.json()
-            const foldersData = await foldersRes.json()
+            const [statusData, summaryData, foldersData, timelineData] = await Promise.all([
+                statusRes.json(),
+                summaryRes.json(),
+                foldersRes.json(),
+                timelineRes.json()
+            ])
 
             setTrackerStatus(statusData)
             setSummaryStats(summaryData)
             setFolders(foldersData)
+            setTimeline(timelineData.activities || [])
 
-            if (selectedFolderId === null) {
-                const timelineData = await workloadRes.json()
-                setTimeline(timelineData.activities || [])
-                setTasks([])
-            } else {
-                const tasksData = await workloadRes.json()
+            if (tasksRes) {
+                const tasksData = await tasksRes.json()
                 setTasks(tasksData.tasks || [])
-                setTimeline([])
+            } else {
+                setTasks([])
             }
+
             setLoading(false)
         } catch (error) {
             console.error('Error fetching data:', error)
@@ -224,17 +232,9 @@ function App() {
         }
     }
 
-    const toggleTimeline = (taskId) => {
-        setCollapsedTimelines(prev => ({
-            ...prev,
-            [taskId]: !prev[taskId]
-        }))
-    }
-
     useEffect(() => {
         setSelectedTask(null)
         setTaskStats(null)
-        setCollapsedTimelines({})
     }, [selectedFolderId])
 
     const handleCreateFolder = async () => {
@@ -403,15 +403,6 @@ function App() {
             .slice(0, 2)
     }
 
-    const timelineByTask = timeline.reduce((acc, activity) => {
-        const taskId = activity.task_id || 'unknown'
-        if (!acc[taskId]) {
-            acc[taskId] = []
-        }
-        acc[taskId].push(activity)
-        return acc
-    }, {})
-
     if (loading) {
         return (
             <div className="app">
@@ -542,18 +533,42 @@ function App() {
                                         </div>
                                         <div className="folder-info">
                                             {renamingFolderId === folder.id ? (
-                                                <input
-                                                    type="text"
-                                                    value={renameFolderValue}
-                                                    onChange={(e) => setRenameFolderValue(e.target.value)}
-                                                    onKeyPress={(e) => {
-                                                        if (e.key === 'Enter') renameFolder(folder.id)
-                                                        if (e.key === 'Escape') setRenamingFolderId(null)
-                                                    }}
-                                                    onBlur={() => setRenamingFolderId(null)}
-                                                    autoFocus
-                                                    className="folder-rename-input"
-                                                />
+                                                <div className="folder-rename-wrapper">
+                                                    <input
+                                                        type="text"
+                                                        value={renameFolderValue}
+                                                        onChange={(e) => setRenameFolderValue(e.target.value)}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') {
+                                                                e.preventDefault()
+                                                                handleRenameFolder(folder.id)
+                                                            }
+                                                            if (e.key === 'Escape') {
+                                                                setRenamingFolderId(null)
+                                                                setRenameFolderValue('')
+                                                            }
+                                                        }}
+                                                        autoFocus
+                                                        className="folder-rename-input"
+                                                    />
+                                                    <div className="folder-rename-actions">
+                                                        <button
+                                                            onClick={() => handleRenameFolder(folder.id)}
+                                                            className="btn btn-primary btn-small"
+                                                        >
+                                                            Save
+                                                        </button>
+                                                        <button
+                                                            onClick={() => {
+                                                                setRenamingFolderId(null)
+                                                                setRenameFolderValue('')
+                                                            }}
+                                                            className="btn btn-secondary btn-small"
+                                                        >
+                                                            Cancel
+                                                        </button>
+                                                    </div>
+                                                </div>
                                             ) : (
                                                 <h3 onClick={() => setSelectedFolderId(folder.id)} style={{ cursor: 'pointer' }}>
                                                     {folder.name}
@@ -732,6 +747,34 @@ function App() {
                                             </div>
                                         </div>
 
+                                        <h3 className="section-title">
+                                            <Clock3 size={20} />
+                                            Timeline ({selectedDate})
+                                        </h3>
+                                        {taskTimeline.length === 0 ? (
+                                            <p className="no-data">No activity recorded for this task on the selected day.</p>
+                                        ) : (
+                                            <div className="timeline">
+                                                {taskTimeline.map((activity) => (
+                                                    <div key={activity.id} className="timeline-item">
+                                                        <div className="timeline-time">{formatTime(activity.start_time)}</div>
+                                                        <div className="timeline-icon">
+                                                            <div className="timeline-initials">{getInitials(activity.app_name)}</div>
+                                                        </div>
+                                                        <div className="timeline-content">
+                                                            <h4>{activity.app_name}</h4>
+                                                            {activity.duration && (
+                                                                <span className="timeline-duration">{formatDuration(activity.duration)}</span>
+                                                            )}
+                                                            {activity.window_title && (
+                                                                <p className="timeline-window">{activity.window_title}</p>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+
                                         {taskStats.apps.length > 0 && (
                                             <>
                                                 <h3 className="section-title">
@@ -804,64 +847,6 @@ function App() {
                             </div>
                         )}
                     </>
-                )}
-
-                {/* Timeline for folder overview (when no folder selected) */}
-                {!inFolderView && (
-                    <div className="card">
-                        <div className="card-header">
-                            <h2 className="card-title">Timeline for {selectedDate}</h2>
-                            <input
-                                type="date"
-                                value={selectedDate}
-                                onChange={(e) => setSelectedDate(e.target.value)}
-                                className="date-picker"
-                            />
-                        </div>
-
-                        {Object.keys(timelineByTask).length === 0 ? (
-                            <p className="no-data">No activities tracked yet.</p>
-                        ) : (
-                            Object.entries(timelineByTask).map(([taskId, activities]) => {
-                                const task = tasks.find(t => t.id === parseInt(taskId))
-                                const isCollapsed = collapsedTimelines[taskId]
-                                return (
-                                    <div key={taskId} className="task-timeline">
-                                        <div className="timeline-task-header">
-                                            <h3 className="timeline-task-title">
-                                                Task: {task?.title || `ID ${taskId}`} ({activities.length} activities)
-                                            </h3>
-                                            <button
-                                                onClick={() => toggleTimeline(taskId)}
-                                                className="btn btn-secondary btn-collapse"
-                                                title={isCollapsed ? 'Expand' : 'Collapse'}
-                                            >
-                                                {isCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
-                                            </button>
-                                        </div>
-                                        {!isCollapsed && (
-                                            <div className="timeline">
-                                                {activities.map((activity) => (
-                                                    <div key={activity.id} className="timeline-item">
-                                                        <div className="timeline-time">{formatTime(activity.start_time)}</div>
-                                                        <div className="timeline-icon">
-                                                            <div className="timeline-initials">{getInitials(activity.app_name)}</div>
-                                                        </div>
-                                                        <div className="timeline-content">
-                                                            <h4>{activity.app_name}</h4>
-                                                            {activity.duration && (
-                                                                <span className="timeline-duration">{formatDuration(activity.duration)}</span>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                )
-                            })
-                        )}
-                    </div>
                 )}
             </main>
 
