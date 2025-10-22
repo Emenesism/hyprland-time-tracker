@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { format, parseISO } from 'date-fns'
-import { Activity, Play, Square, Plus, Trash2, Eye, PieChart, BarChart3, Download, Calendar, Folder, FolderPlus, FolderOpen, Edit2, ArrowLeft, ChevronRight, Clock3 } from 'lucide-react'
+import { Activity, Play, Square, Plus, Trash2, Eye, PieChart, BarChart3, Download, Calendar, Folder, FolderPlus, FolderOpen, Edit2, ArrowLeft, ChevronRight } from 'lucide-react'
 import { PieChart as RechartsPie, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import './App.css'
 
@@ -25,13 +25,6 @@ function App() {
     const [loading, setLoading] = useState(true)
     const [selectedTask, setSelectedTask] = useState(null)
     const [taskStats, setTaskStats] = useState(null)
-
-    const taskTimeline = useMemo(() => {
-        if (!selectedTask) return []
-        return timeline
-            .filter(activity => activity.task_id === selectedTask.id)
-            .sort((a, b) => new Date(b.start_time) - new Date(a.start_time))
-    }, [selectedTask, timeline])
 
     const pieLabelRenderer = useMemo(() => {
         if (!taskStats || !taskStats.apps?.length) {
@@ -746,34 +739,6 @@ function App() {
                                                 <p className="stat-value">{taskStats.apps.length}</p>
                                             </div>
                                         </div>
-
-                                        <h3 className="section-title">
-                                            <Clock3 size={20} />
-                                            Timeline ({selectedDate})
-                                        </h3>
-                                        {taskTimeline.length === 0 ? (
-                                            <p className="no-data">No activity recorded for this task on the selected day.</p>
-                                        ) : (
-                                            <div className="timeline">
-                                                {taskTimeline.map((activity) => (
-                                                    <div key={activity.id} className="timeline-item">
-                                                        <div className="timeline-time">{formatTime(activity.start_time)}</div>
-                                                        <div className="timeline-icon">
-                                                            <div className="timeline-initials">{getInitials(activity.app_name)}</div>
-                                                        </div>
-                                                        <div className="timeline-content">
-                                                            <h4>{activity.app_name}</h4>
-                                                            {activity.duration && (
-                                                                <span className="timeline-duration">{formatDuration(activity.duration)}</span>
-                                                            )}
-                                                            {activity.window_title && (
-                                                                <p className="timeline-window">{activity.window_title}</p>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
 
                                         {taskStats.apps.length > 0 && (
                                             <>
