@@ -48,9 +48,12 @@ def normalize_app_name(app_name: str, window_title: str = None) -> str:
 
 
 class Database:
+    DEFAULT_FOLDER_NAME = "Unsorted"
+
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self.init_db()
+        self.default_folder_id = self.ensure_folder_support()
 
     def get_connection(self):
         """Get a database connection"""
@@ -63,14 +66,26 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
 
+        # Folders table - groups tasks/projects
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS folders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # Tasks table - stores user-defined tasks/projects
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
                 description TEXT,
+                folder_id INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL
             )
         """)
 
@@ -120,23 +135,82 @@ class Database:
             ON activities(task_id)
         """)
 
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_tasks_folder
+            ON tasks(folder_id)
+        """)
+
         conn.commit()
         conn.close()
         logger.info(f"Database initialized at {self.db_path}")
 
-    def create_task(self, title: str, description: str = None) -> int:
+    def ensure_folder_support(self) -> int:
+        """Ensure folder table, default folder and column relationships exist"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        # Ensure folders table exists (idempotent)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS folders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Ensure tasks table has folder_id column for legacy databases
+        cursor.execute("PRAGMA table_info(tasks)")
+        columns = {row['name'] for row in cursor.fetchall()}
+        if 'folder_id' not in columns:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN folder_id INTEGER")
+
+        # Create default folder if missing
+        cursor.execute("SELECT id FROM folders WHERE name = ?", (self.DEFAULT_FOLDER_NAME,))
+        row = cursor.fetchone()
+        if row:
+            default_folder_id = row['id']
+        else:
+            cursor.execute("INSERT INTO folders (name) VALUES (?)", (self.DEFAULT_FOLDER_NAME,))
+            default_folder_id = cursor.lastrowid
+
+        # Assign existing tasks without a folder to the default
+        cursor.execute("""
+            UPDATE tasks
+            SET folder_id = ?
+            WHERE folder_id IS NULL
+        """, (default_folder_id,))
+
+        conn.commit()
+        conn.close()
+        return default_folder_id
+
+    def create_task(self, title: str, description: str = None, folder_id: Optional[int] = None) -> int:
         """Create a new task"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
         now = datetime.now()
 
+        if folder_id is not None:
+            cursor.execute("SELECT id FROM folders WHERE id = ?", (folder_id,))
+            row = cursor.fetchone()
+            target_folder_id = folder_id if row else self.default_folder_id
+        else:
+            target_folder_id = self.default_folder_id
+
         cursor.execute("""
-            INSERT INTO tasks (title, description, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
-        """, (title, description, now, now))
+            INSERT INTO tasks (title, description, folder_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (title, description, target_folder_id, now, now))
 
         task_id = cursor.lastrowid
+
+        cursor.execute("""
+            UPDATE folders
+            SET updated_at = ?
+            WHERE id = ?
+        """, (now, target_folder_id))
 
         conn.commit()
         conn.close()
@@ -144,17 +218,213 @@ class Database:
         logger.info(f"Created task {task_id}: {title}")
         return task_id
 
-    def get_tasks(self, limit: int = 100) -> List[Dict]:
-        """Get all tasks"""
+    def get_folders(self) -> List[Dict]:
+        """Get all folders"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT id, title, description, created_at, updated_at
+            SELECT id, name, created_at, updated_at
+            FROM folders
+            ORDER BY name COLLATE NOCASE
+        """)
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        return [dict(row) for row in rows]
+
+    def get_folder(self, folder_id: int) -> Optional[Dict]:
+        """Retrieve a single folder"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, name, created_at, updated_at
+            FROM folders
+            WHERE id = ?
+        """, (folder_id,))
+
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def create_folder(self, name: str) -> int:
+        """Create a new folder"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        now = datetime.now()
+
+        try:
+            cursor.execute("""
+                INSERT INTO folders (name, created_at, updated_at)
+                VALUES (?, ?, ?)
+            """, (name, now, now))
+        except sqlite3.IntegrityError as exc:
+            conn.rollback()
+            conn.close()
+            raise ValueError("Folder name must be unique") from exc
+
+        folder_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        logger.info(f"Created folder {folder_id}: {name}")
+        return folder_id
+
+    def rename_folder(self, folder_id: int, name: str) -> bool:
+        """Rename an existing folder"""
+        if folder_id == self.default_folder_id:
+            raise ValueError("Cannot rename the default folder")
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        now = datetime.now()
+
+        cursor.execute("""
+            UPDATE folders
+            SET name = ?, updated_at = ?
+            WHERE id = ?
+        """, (name, now, folder_id))
+
+        updated = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return updated
+
+    def delete_folder(self, folder_id: int) -> bool:
+        """Delete a folder and move tasks to default"""
+        if folder_id == self.default_folder_id:
+            raise ValueError("Cannot delete the default folder")
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        # Reassign tasks
+        cursor.execute("""
+            UPDATE tasks
+            SET folder_id = ?
+            WHERE folder_id = ?
+        """, (self.default_folder_id, folder_id))
+
+        cursor.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
+        deleted = cursor.rowcount > 0
+
+        if deleted:
+            cursor.execute("""
+                UPDATE folders
+                SET updated_at = ?
+                WHERE id = ?
+            """, (datetime.now(), self.default_folder_id))
+
+        conn.commit()
+        conn.close()
+        if deleted:
+            logger.info(f"Deleted folder {folder_id}, reassigned tasks to default")
+        return deleted
+
+    def move_task_to_folder(self, task_id: int, folder_id: int) -> bool:
+        """Move task to a different folder"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT folder_id FROM tasks WHERE id = ?", (task_id,))
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return False
+
+        current_folder = row['folder_id']
+
+        cursor.execute("SELECT id FROM folders WHERE id = ?", (folder_id,))
+        target_row = cursor.fetchone()
+        if not target_row:
+            folder_id = self.default_folder_id
+
+        now = datetime.now()
+
+        cursor.execute("""
+            UPDATE tasks
+            SET folder_id = ?, updated_at = ?
+            WHERE id = ?
+        """, (folder_id, now, task_id))
+
+        updated = cursor.rowcount > 0
+
+        if updated:
+            cursor.execute("""
+                UPDATE folders
+                SET updated_at = ?
+                WHERE id = ?
+            """, (now, folder_id))
+
+            if current_folder and current_folder != folder_id:
+                cursor.execute("""
+                    UPDATE folders
+                    SET updated_at = ?
+                    WHERE id = ?
+                """, (now, current_folder))
+
+        conn.commit()
+        conn.close()
+        return updated
+
+    def get_folders_with_stats(self) -> List[Dict]:
+        """Return folders with aggregated task/time stats"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, name, created_at, updated_at
+            FROM folders
+        """)
+        folders = [dict(row) for row in cursor.fetchall()]
+
+        cursor.execute("""
+            SELECT folder_id, COUNT(*) as task_count
             FROM tasks
-            ORDER BY updated_at DESC
-            LIMIT ?
-        """, (limit,))
+            GROUP BY folder_id
+        """)
+        task_counts = {row['folder_id']: row['task_count'] for row in cursor.fetchall() if row['folder_id'] is not None}
+
+        cursor.execute("""
+            SELECT t.folder_id as folder_id, SUM(a.duration) as total_duration
+            FROM activities a
+            JOIN tasks t ON a.task_id = t.id
+            WHERE a.duration IS NOT NULL
+            GROUP BY t.folder_id
+        """)
+        durations = {row['folder_id']: row['total_duration'] for row in cursor.fetchall() if row['folder_id'] is not None}
+
+        conn.close()
+
+        for folder in folders:
+            fid = folder['id']
+            folder['task_count'] = task_counts.get(fid, 0)
+            folder['total_duration'] = int(durations.get(fid, 0) or 0)
+
+        folders.sort(key=lambda f: (f['id'] != self.default_folder_id, f['name'].lower()))
+        return folders
+
+    def get_tasks(self, limit: int = 100, folder_id: Optional[int] = None) -> List[Dict]:
+        """Get all tasks"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        if folder_id is not None:
+            cursor.execute("""
+                SELECT id, title, description, folder_id, created_at, updated_at
+                FROM tasks
+                WHERE folder_id = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+            """, (folder_id, limit))
+        else:
+            cursor.execute("""
+                SELECT id, title, description, folder_id, created_at, updated_at
+                FROM tasks
+                ORDER BY updated_at DESC
+                LIMIT ?
+            """, (limit,))
 
         rows = cursor.fetchall()
         conn.close()
@@ -167,7 +437,7 @@ class Database:
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT id, title, description, created_at, updated_at
+            SELECT id, title, description, folder_id, created_at, updated_at
             FROM tasks
             WHERE id = ?
         """, (task_id,))
@@ -184,15 +454,71 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
 
+        cursor.execute("SELECT folder_id FROM tasks WHERE id = ?", (task_id,))
+        row = cursor.fetchone()
+        folder_id = row['folder_id'] if row else None
+
         # Delete task (CASCADE will delete associated activities)
         cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         deleted = cursor.rowcount > 0
+
+        if deleted and folder_id:
+            cursor.execute("""
+                UPDATE folders
+                SET updated_at = ?
+                WHERE id = ?
+            """, (datetime.now(), folder_id))
 
         conn.commit()
         conn.close()
 
         logger.info(f"Deleted task {task_id}")
         return deleted
+
+    def get_task_timeline(self, task_id: int, limit: Optional[int] = None) -> List[Dict]:
+        """Get timeline entries for a specific task"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        if limit is None:
+            cursor.execute("""
+                SELECT 
+                    id,
+                    app_name,
+                    window_title,
+                    start_time,
+                    end_time,
+                    duration,
+                    date
+                FROM activities
+                WHERE task_id = ?
+                ORDER BY start_time DESC
+            """, (task_id,))
+        else:
+            cursor.execute("""
+                SELECT 
+                    id,
+                    app_name,
+                    window_title,
+                    start_time,
+                    end_time,
+                    duration,
+                    date
+                FROM activities
+                WHERE task_id = ?
+                ORDER BY start_time DESC
+                LIMIT ?
+            """, (task_id, limit))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        timeline = []
+        for row in rows:
+            entry = dict(row)
+            entry['app_name'] = normalize_app_name(row['app_name'], row['window_title'])
+            timeline.append(entry)
+        return timeline
 
     def get_task_stats(self, task_id: int) -> Dict:
         """Get statistics for a specific task"""
@@ -229,10 +555,13 @@ class Database:
 
         conn.close()
 
+        timeline = self.get_task_timeline(task_id)
+
         return {
             'total_time': int(total_time),
             'activity_count': activity_count,
-            'apps': apps
+            'apps': apps,
+            'timeline': timeline
         }
 
     def start_activity(self, task_id: int, app_name: str, window_title: str) -> int:
