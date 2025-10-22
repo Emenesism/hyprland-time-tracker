@@ -704,7 +704,7 @@ function App() {
                                                                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                                                 ))}
                                                             </Pie>
-                                                            <Tooltip 
+                                                            <Tooltip
                                                                 formatter={(value, name) => [formatDuration(value), name]}
                                                                 contentStyle={{
                                                                     backgroundColor: 'rgba(0, 0, 0, 0.9)',
@@ -730,8 +730,8 @@ function App() {
                                                         const percentage = Math.round((app.total_duration / total) * 100)
                                                         return (
                                                             <div key={idx} className="pie-legend-item">
-                                                                <div 
-                                                                    className="pie-legend-color" 
+                                                                <div
+                                                                    className="pie-legend-color"
                                                                     style={{ backgroundColor: COLORS[idx % COLORS.length] }}
                                                                 />
                                                                 <span className="pie-legend-name">{app.app_name}</span>
