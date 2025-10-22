@@ -6,7 +6,6 @@ import './App.css'
 
 const API_BASE = '/api'
 const COLORS = ['#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#ec4899']
-const RADIAN = Math.PI / 180
 
 function App() {
     const [tasks, setTasks] = useState([])
@@ -25,64 +24,6 @@ function App() {
     const [loading, setLoading] = useState(true)
     const [selectedTask, setSelectedTask] = useState(null)
     const [taskStats, setTaskStats] = useState(null)
-
-    const pieLabelRenderer = useMemo(() => {
-        if (!taskStats || !taskStats.apps?.length) {
-            return () => null
-        }
-
-        const lastY = { left: null, right: null }
-        const minGap = 20
-
-        return ({ cx, cy, midAngle, outerRadius, percent, payload }) => {
-            if (!payload || percent === 0) {
-                return null
-            }
-
-            const baseRadius = outerRadius + 26
-            let x = cx + baseRadius * Math.cos(-midAngle * RADIAN)
-            let y = cy + baseRadius * Math.sin(-midAngle * RADIAN)
-
-            const side = x >= cx ? 'right' : 'left'
-
-            if (lastY[side] !== null && Math.abs(y - lastY[side]) < minGap) {
-                const offset = (minGap - Math.abs(y - lastY[side])) * (y >= lastY[side] ? 1 : -1)
-                y += offset
-            }
-
-            lastY[side] = y
-
-            const connectorOuter = outerRadius + 10
-            const startX = cx + outerRadius * Math.cos(-midAngle * RADIAN)
-            const startY = cy + outerRadius * Math.sin(-midAngle * RADIAN)
-            const midX = cx + connectorOuter * Math.cos(-midAngle * RADIAN)
-            const midY = cy + connectorOuter * Math.sin(-midAngle * RADIAN)
-            const endX = x > cx ? x - 6 : x + 6
-
-            const percentage = Math.round(percent * 100)
-            const label = `${payload.app_name}: ${percentage}%`
-
-            return (
-                <g className="pie-label-group">
-                    <polyline
-                        className="pie-label-line"
-                        points={`${startX},${startY} ${midX},${midY} ${endX},${y}`}
-                    />
-                    <circle cx={endX} cy={y} r={2} className="pie-label-dot" />
-                    <text
-                        x={x}
-                        y={y}
-                        fill="#ffffff"
-                        textAnchor={side === 'right' ? 'start' : 'end'}
-                        dominantBaseline="central"
-                        className="pie-label-text"
-                    >
-                        {label}
-                    </text>
-                </g>
-            )
-        }
-    }, [taskStats])
 
     // Initialize export dates
     const today = new Date()
@@ -747,7 +688,7 @@ function App() {
                                                     Time Distribution by App
                                                 </h3>
                                                 <div className="chart-container">
-                                                    <ResponsiveContainer width="100%" height={340}>
+                                                    <ResponsiveContainer width="100%" height={300}>
                                                         <RechartsPie>
                                                             <Pie
                                                                 data={taskStats.apps}
@@ -755,19 +696,49 @@ function App() {
                                                                 nameKey="app_name"
                                                                 cx="50%"
                                                                 cy="50%"
-                                                                innerRadius={30}
+                                                                innerRadius={40}
                                                                 outerRadius={100}
-                                                                labelLine={false}
-                                                                label={pieLabelRenderer}
                                                                 paddingAngle={2}
                                                             >
                                                                 {taskStats.apps.map((entry, index) => (
                                                                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                                                 ))}
                                                             </Pie>
-                                                            <Tooltip formatter={(value) => formatDuration(value)} />
+                                                            <Tooltip 
+                                                                formatter={(value, name) => [formatDuration(value), name]}
+                                                                contentStyle={{
+                                                                    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+                                                                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                                                                    borderRadius: '8px',
+                                                                    padding: '8px 12px',
+                                                                    color: '#ffffff'
+                                                                }}
+                                                                labelStyle={{
+                                                                    color: '#ffffff'
+                                                                }}
+                                                                itemStyle={{
+                                                                    color: '#ffffff'
+                                                                }}
+                                                            />
                                                         </RechartsPie>
                                                     </ResponsiveContainer>
+                                                </div>
+
+                                                <div className="pie-legend">
+                                                    {taskStats.apps.map((app, idx) => {
+                                                        const total = taskStats.apps.reduce((sum, a) => sum + a.total_duration, 0)
+                                                        const percentage = Math.round((app.total_duration / total) * 100)
+                                                        return (
+                                                            <div key={idx} className="pie-legend-item">
+                                                                <div 
+                                                                    className="pie-legend-color" 
+                                                                    style={{ backgroundColor: COLORS[idx % COLORS.length] }}
+                                                                />
+                                                                <span className="pie-legend-name">{app.app_name}</span>
+                                                                <span className="pie-legend-value">{percentage}% · {formatDuration(app.total_duration)}</span>
+                                                            </div>
+                                                        )
+                                                    })}
                                                 </div>
 
                                                 <h3 className="section-title">

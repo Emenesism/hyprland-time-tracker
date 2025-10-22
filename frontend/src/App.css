@@ -411,27 +411,52 @@
     position: relative;
 }
 
-.pie-label-text {
-    font-size: 0.85rem;
+/* Pie Chart Legend */
+.pie-legend {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.pie-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem;
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.pie-legend-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+    transform: translateX(4px);
+}
+
+.pie-legend-color {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.pie-legend-name {
+    flex: 1;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 0.9rem;
+}
+
+.pie-legend-value {
     font-weight: 600;
-    paint-order: stroke;
-    stroke: rgba(10, 10, 25, 0.6);
-    stroke-width: 4px;
-    stroke-linejoin: round;
-}
-
-.pie-label-group {
-    pointer-events: none;
-}
-
-.pie-label-line {
-    stroke: rgba(255, 255, 255, 0.45);
-    stroke-width: 1.25px;
-    fill: none;
-}
-
-.pie-label-dot {
-    fill: rgba(255, 255, 255, 0.65);
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.85rem;
+    white-space: nowrap;
 }
 
 .recharts-legend-wrapper {
