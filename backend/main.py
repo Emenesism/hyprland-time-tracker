@@ -101,12 +101,34 @@ class TaskResponse(BaseModel):
     id: int
     title: str
     description: Optional[str]
+    folder_id: Optional[int]
     created_at: str
     updated_at: str
 
 
 class StartTrackingRequest(BaseModel):
     task_id: int
+
+
+class FolderResponse(BaseModel):
+    id: int
+    name: str
+    created_at: str
+    updated_at: str
+    task_count: int
+    total_duration: int
+
+
+class CreateFolderRequest(BaseModel):
+    name: str
+
+
+class RenameFolderRequest(BaseModel):
+    name: str
+
+
+class MoveTaskRequest(BaseModel):
+    folder_id: int
 
 
 # Startup and shutdown events
@@ -168,10 +190,10 @@ async def get_tracker_status():
 
 # Task Management Endpoints
 @app.post("/api/tasks", response_model=TaskResponse)
-async def create_task(title: str, description: Optional[str] = None):
+async def create_task(title: str, description: Optional[str] = None, folder_id: Optional[int] = None):
     """Create a new task"""
     try:
-        task_id = db.create_task(title, description)
+        task_id = db.create_task(title, description, folder_id)
         task = db.get_task(task_id)
         return task
     except Exception as e:
@@ -180,10 +202,10 @@ async def create_task(title: str, description: Optional[str] = None):
 
 
 @app.get("/api/tasks")
-async def get_tasks(limit: int = Query(default=100, ge=1, le=1000)):
+async def get_tasks(limit: int = Query(default=100, ge=1, le=1000), folder_id: Optional[int] = None):
     """Get all tasks"""
     try:
-        tasks = db.get_tasks(limit)
+        tasks = db.get_tasks(limit, folder_id)
         return {"tasks": tasks}
     except Exception as e:
         logger.error(f"Error getting tasks: {e}")
@@ -217,6 +239,100 @@ async def delete_task(task_id: int):
         raise
     except Exception as e:
         logger.error(f"Error deleting task: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tasks/{task_id}/move", response_model=TaskResponse)
+async def move_task(task_id: int, request: MoveTaskRequest):
+    """Move a task to another folder"""
+    try:
+        success = db.move_task_to_folder(task_id, request.folder_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Task not found")
+        task = db.get_task(task_id)
+        return task
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error moving task: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/folders", response_model=List[FolderResponse])
+async def list_folders():
+    """List all folders with summary stats"""
+    try:
+        folders = db.get_folders_with_stats()
+        return folders
+    except Exception as e:
+        logger.error(f"Error getting folders: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/folders", response_model=FolderResponse)
+async def create_folder(request: CreateFolderRequest):
+    """Create a new folder"""
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Folder name cannot be empty")
+
+    try:
+        folder_id = db.create_folder(name)
+        folder = db.get_folder(folder_id)
+        folder.update({
+            "task_count": 0,
+            "total_duration": 0
+        })
+        return folder
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating folder: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/folders/{folder_id}", response_model=FolderResponse)
+async def rename_folder(folder_id: int, request: RenameFolderRequest):
+    """Rename an existing folder"""
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Folder name cannot be empty")
+
+    try:
+        updated = db.rename_folder(folder_id, name)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        folders = db.get_folders_with_stats()
+        folder = next((f for f in folders if f['id'] == folder_id), None)
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+        return folder
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error renaming folder: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/folders/{folder_id}")
+async def delete_folder(folder_id: int):
+    """Delete a folder (tasks reassigned to default)"""
+    try:
+        deleted = db.delete_folder(folder_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Folder not found or already deleted")
+        folders = db.get_folders_with_stats()
+        return {"status": "deleted", "folder_id": folder_id, "folders": folders}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting folder: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
