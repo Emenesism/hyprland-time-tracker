@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { format, parseISO } from 'date-fns'
-import { Activity, Play, Square, Plus, Trash2, Eye, PieChart, BarChart3, ChevronDown, ChevronUp, Download, Calendar } from 'lucide-react'
+import { Activity, Play, Square, Plus, Trash2, Eye, PieChart, BarChart3, ChevronDown, ChevronUp, Download, Calendar, Folder, FolderPlus, FolderOpen, Edit2, ArrowLeft, ChevronRight } from 'lucide-react'
 import { PieChart as RechartsPie, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import './App.css'
 
@@ -11,6 +11,12 @@ const RADIAN = Math.PI / 180
 function App() {
     const [tasks, setTasks] = useState([])
     const [timeline, setTimeline] = useState([])
+    const [folders, setFolders] = useState([])
+    const [selectedFolderId, setSelectedFolderId] = useState(null)
+    const selectedFolder = useMemo(() => folders.find(f => f.id === selectedFolderId) || null, [folders, selectedFolderId])
+    const [newFolderName, setNewFolderName] = useState('')
+    const [renamingFolderId, setRenamingFolderId] = useState(null)
+    const [renameFolderValue, setRenameFolderValue] = useState('')
     const [summaryStats, setSummaryStats] = useState(null)
     const [trackerStatus, setTrackerStatus] = useState(null)
     const [newTaskTitle, setNewTaskTitle] = useState('')
@@ -20,6 +26,9 @@ function App() {
     const [selectedTask, setSelectedTask] = useState(null)
     const [taskStats, setTaskStats] = useState(null)
     const [collapsedTimelines, setCollapsedTimelines] = useState({})
+
+    const defaultFolderId = useMemo(() => (folders.length > 0 ? folders[0].id : null), [folders])
+
     const pieLabelRenderer = useMemo(() => {
         if (!taskStats || !taskStats.apps?.length) {
             return () => null
@@ -90,26 +99,42 @@ function App() {
         fetchData()
         const interval = setInterval(fetchData, 5000)
         return () => clearInterval(interval)
-    }, [selectedDate])
+    }, [selectedDate, selectedFolderId])
 
     const fetchData = async () => {
         try {
-            const [tasksRes, timelineRes, statusRes, summaryRes] = await Promise.all([
-                fetch(`${API_BASE}/tasks`),
-                fetch(`${API_BASE}/timeline?date=${selectedDate}`),
+            const workloadPromise = selectedFolderId === null
+                ? fetch(`${API_BASE}/timeline?date=${selectedDate}`)
+                : fetch(`${API_BASE}/tasks?folder_id=${selectedFolderId}`)
+
+            const [statusRes, summaryRes, foldersRes, workloadRes] = await Promise.all([
                 fetch(`${API_BASE}/tracker/status`),
                 fetch(`${API_BASE}/stats/summary`),
+                fetch(`${API_BASE}/folders`),
+                workloadPromise
             ])
 
-            const tasksData = await tasksRes.json()
-            const timelineData = await timelineRes.json()
+            if (![statusRes, summaryRes, foldersRes, workloadRes].every(res => res.ok)) {
+                throw new Error('Failed to fetch data')
+            }
+
             const statusData = await statusRes.json()
             const summaryData = await summaryRes.json()
+            const foldersData = await foldersRes.json()
 
-            setTasks(tasksData.tasks || [])
-            setTimeline(timelineData.activities || [])
             setTrackerStatus(statusData)
             setSummaryStats(summaryData)
+            setFolders(foldersData)
+
+            if (selectedFolderId === null) {
+                const timelineData = await workloadRes.json()
+                setTimeline(timelineData.activities || [])
+                setTasks([])
+            } else {
+                const tasksData = await workloadRes.json()
+                setTasks(tasksData.tasks || [])
+                setTimeline([])
+            }
             setLoading(false)
         } catch (error) {
             console.error('Error fetching data:', error)
@@ -120,6 +145,10 @@ function App() {
 
     const createTask = async () => {
         if (!newTaskTitle.trim()) return
+        if (selectedFolderId === null) {
+            alert('Select a folder before creating tasks.')
+            return
+        }
 
         try {
             const url = new URL(`${API_BASE}/tasks`, window.location.origin)
@@ -127,6 +156,7 @@ function App() {
             if (newTaskDescription.trim()) {
                 url.searchParams.append('description', newTaskDescription)
             }
+            url.searchParams.append('folder_id', selectedFolderId)
 
             const response = await fetch(url.toString(), {
                 method: 'POST'
@@ -199,6 +229,110 @@ function App() {
             ...prev,
             [taskId]: !prev[taskId]
         }))
+    }
+
+    useEffect(() => {
+        setSelectedTask(null)
+        setTaskStats(null)
+        setCollapsedTimelines({})
+    }, [selectedFolderId])
+
+    const handleCreateFolder = async () => {
+        const name = newFolderName.trim()
+        if (!name) return
+
+        try {
+            const response = await fetch(`${API_BASE}/folders`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            })
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}))
+                alert(errorData.detail || 'Failed to create folder')
+                return
+            }
+
+            setNewFolderName('')
+            fetchData()
+        } catch (error) {
+            console.error('Error creating folder:', error)
+        }
+    }
+
+    const handleRenameFolder = async (folderId) => {
+        const name = renameFolderValue.trim()
+        if (!name) return
+
+        try {
+            const response = await fetch(`${API_BASE}/folders/${folderId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            })
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}))
+                alert(errorData.detail || 'Failed to rename folder')
+                return
+            }
+
+            setRenamingFolderId(null)
+            setRenameFolderValue('')
+            fetchData()
+        } catch (error) {
+            console.error('Error renaming folder:', error)
+        }
+    }
+
+    const handleDeleteFolder = async (folderId) => {
+        if (!confirm('Delete this folder? All tasks inside will move to the default folder.')) {
+            return
+        }
+
+        try {
+            const response = await fetch(`${API_BASE}/folders/${folderId}`, {
+                method: 'DELETE'
+            })
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}))
+                alert(errorData.detail || 'Failed to delete folder')
+                return
+            }
+
+            if (selectedFolderId === folderId) {
+                setSelectedFolderId(null)
+            }
+            fetchData()
+        } catch (error) {
+            console.error('Error deleting folder:', error)
+        }
+    }
+
+    const moveTaskToFolder = async (taskId, folderId) => {
+        try {
+            const response = await fetch(`${API_BASE}/tasks/${taskId}/move`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ folder_id: folderId })
+            })
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}))
+                alert(errorData.detail || 'Failed to move task')
+                return
+            }
+
+            fetchData()
+        } catch (error) {
+            console.error('Error moving task:', error)
+        }
+    }
+
+    const handleBackToFolders = () => {
+        setSelectedFolderId(null)
     }
 
     const exportToPDF = async () => {
@@ -289,6 +423,7 @@ function App() {
     const last30DaysSeconds = summaryStats?.last_30_days_time ?? 0
     const last30DaysHours = formatHours(last30DaysSeconds)
     const last30DaysAverageHours = last30DaysSeconds ? formatHours(last30DaysSeconds / 30) : '0'
+    const inFolderView = selectedFolderId !== null
 
     return (
         <div className="app">
@@ -370,253 +505,364 @@ function App() {
                     </div>
                 </div>
 
-                <div className="card">
-                    <h2 className="card-title">Current Tracking</h2>
-                    {trackerStatus?.running ? (
-                        <div className="current-tracking">
-                            <div className="tracking-info">
-                                <p><strong>Task ID:</strong> {trackerStatus.task_id}</p>
-                                <p><strong>Current App:</strong> {trackerStatus.current_app || 'None'}</p>
-                                <p><strong>Window:</strong> {trackerStatus.current_window || 'N/A'}</p>
-                            </div>
-                            <button onClick={stopTracking} className="btn btn-danger">
-                                <Square size={18} />
-                                Stop Tracking
-                            </button>
-                        </div>
-                    ) : (
-                        <p className="no-tracking">No active tracking. Start a task below.</p>
-                    )}
-                </div>
-
-                <div className="card">
-                    <h2 className="card-title">Tasks</h2>
-
-                    <div className="create-task">
-                        <div className="task-input-group">
-                            <input
-                                type="text"
-                                placeholder="Enter task name..."
-                                value={newTaskTitle}
-                                onChange={(e) => setNewTaskTitle(e.target.value)}
-                                onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && createTask()}
-                                className="task-input"
-                            />
-                            <textarea
-                                placeholder="Enter task description (optional)..."
-                                value={newTaskDescription}
-                                onChange={(e) => setNewTaskDescription(e.target.value)}
-                                className="task-description-input"
-                                rows="2"
-                            />
-                        </div>
-                        <button onClick={createTask} className="btn btn-primary">
-                            <Plus size={18} />
-                            Create Task
-                        </button>
-                    </div>
-
-                    <div className="tasks-list">
-                        {tasks.length === 0 ? (
-                            <p className="no-data">No tasks yet. Create one to start tracking!</p>
-                        ) : (
-                            tasks.map((task) => (
-                                <div key={task.id} className="task-card-item">
-                                    <div className="task-info">
-                                        <h3>{task.title}</h3>
-                                        {task.description && (
-                                            <p className="task-description">{task.description}</p>
-                                        )}
-                                        <p className="task-meta">
-                                            Created: {format(parseISO(task.created_at), 'MMM dd, yyyy HH:mm')}
-                                        </p>
-                                    </div>
-                                    <div className="task-actions">
-                                        <button
-                                            onClick={() => viewTaskDetails(task)}
-                                            className="btn btn-info"
-                                            title="View Details"
-                                        >
-                                            <Eye size={18} />
-                                        </button>
-                                        <button
-                                            onClick={() => startTracking(task.id)}
-                                            className="btn btn-success"
-                                            disabled={trackerStatus?.running && trackerStatus?.task_id === task.id}
-                                        >
-                                            <Play size={18} />
-                                            {trackerStatus?.running && trackerStatus?.task_id === task.id ? 'Active' : 'Start'}
-                                        </button>
-                                        <button
-                                            onClick={() => deleteTask(task.id)}
-                                            className="btn btn-danger-outline"
-                                            title="Delete Task"
-                                        >
-                                            <Trash2 size={18} />
-                                        </button>
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </div>
-
-                {/* Task Details Modal/Panel */}
-                {selectedTask && (
-                    <div className="card task-details-card">
+                {!inFolderView ? (
+                    /* Folders Overview */
+                    <div className="card">
                         <div className="card-header">
                             <h2 className="card-title">
-                                <Activity size={20} style={{ marginRight: '8px' }} />
-                                {selectedTask.title}
+                                <Folder size={20} style={{ marginRight: '8px' }} />
+                                Folders
                             </h2>
-                            <button onClick={() => { setSelectedTask(null); setTaskStats(null) }} className="btn btn-secondary">
-                                Close
+                        </div>
+
+                        <div className="create-task" style={{ marginBottom: '1.5rem' }}>
+                            <input
+                                type="text"
+                                placeholder="New folder name..."
+                                value={newFolderName}
+                                onChange={(e) => setNewFolderName(e.target.value)}
+                                onKeyPress={(e) => e.key === 'Enter' && handleCreateFolder()}
+                                className="task-input"
+                                style={{ flex: 1 }}
+                            />
+                            <button onClick={handleCreateFolder} className="btn btn-primary">
+                                <FolderPlus size={18} />
+                                Create Folder
                             </button>
                         </div>
 
-                        {taskStats && (
-                            <>
-                                <div className="stats-summary">
-                                    <div className="stat-box">
-                                        <h4>Total Time</h4>
-                                        <p className="stat-value">{formatDuration(taskStats.total_time)}</p>
+                        <div className="folders-list">
+                            {folders.length === 0 ? (
+                                <p className="no-data">No folders yet. Create one to organize your tasks!</p>
+                            ) : (
+                                folders.map((folder) => (
+                                    <div key={folder.id} className="folder-card-item">
+                                        <div className="folder-icon">
+                                            <FolderOpen size={24} />
+                                        </div>
+                                        <div className="folder-info">
+                                            {renamingFolderId === folder.id ? (
+                                                <input
+                                                    type="text"
+                                                    value={renameFolderValue}
+                                                    onChange={(e) => setRenameFolderValue(e.target.value)}
+                                                    onKeyPress={(e) => {
+                                                        if (e.key === 'Enter') renameFolder(folder.id)
+                                                        if (e.key === 'Escape') setRenamingFolderId(null)
+                                                    }}
+                                                    onBlur={() => setRenamingFolderId(null)}
+                                                    autoFocus
+                                                    className="folder-rename-input"
+                                                />
+                                            ) : (
+                                                <h3 onClick={() => setSelectedFolderId(folder.id)} style={{ cursor: 'pointer' }}>
+                                                    {folder.name}
+                                                </h3>
+                                            )}
+                                            <p className="folder-meta">
+                                                {folder.task_count} task{folder.task_count !== 1 ? 's' : ''} · {formatDuration(folder.total_duration)} tracked
+                                            </p>
+                                        </div>
+                                        <div className="folder-actions">
+                                            <button
+                                                onClick={() => {
+                                                    setRenamingFolderId(folder.id)
+                                                    setRenameFolderValue(folder.name)
+                                                }}
+                                                className="btn btn-secondary"
+                                                title="Rename Folder"
+                                            >
+                                                <Edit2 size={16} />
+                                            </button>
+                                            <button
+                                                onClick={() => setSelectedFolderId(folder.id)}
+                                                className="btn btn-primary"
+                                                title="Open Folder"
+                                            >
+                                                <ChevronRight size={18} />
+                                                Open
+                                            </button>
+                                            <button
+                                                onClick={() => handleDeleteFolder(folder.id)}
+                                                className="btn btn-danger-outline"
+                                                title="Delete Folder"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </div>
                                     </div>
-                                    <div className="stat-box">
-                                        <h4>Activities</h4>
-                                        <p className="stat-value">{taskStats.activity_count}</p>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                ) : (
+                    /* Folder View - Tasks */
+                    <>
+                        <div className="card">
+                            <div className="card-header">
+                                <button onClick={handleBackToFolders} className="btn btn-secondary">
+                                    <ArrowLeft size={18} />
+                                    Back to Folders
+                                </button>
+                                <h2 className="card-title">
+                                    <FolderOpen size={20} style={{ marginRight: '8px' }} />
+                                    {selectedFolder?.name || 'Folder'}
+                                </h2>
+                            </div>
+                        </div>
+
+                        <div className="card">
+                            <h2 className="card-title">Current Tracking</h2>
+                            {trackerStatus?.running ? (
+                                <div className="current-tracking">
+                                    <div className="tracking-info">
+                                        <p><strong>Task ID:</strong> {trackerStatus.task_id}</p>
+                                        <p><strong>Current App:</strong> {trackerStatus.current_app || 'None'}</p>
+                                        <p><strong>Window:</strong> {trackerStatus.current_window || 'N/A'}</p>
                                     </div>
-                                    <div className="stat-box">
-                                        <h4>Apps Used</h4>
-                                        <p className="stat-value">{taskStats.apps.length}</p>
-                                    </div>
+                                    <button onClick={stopTracking} className="btn btn-danger">
+                                        <Square size={18} />
+                                        Stop Tracking
+                                    </button>
+                                </div>
+                            ) : (
+                                <p className="no-tracking">No active tracking. Start a task below.</p>
+                            )}
+                        </div>
+
+                        <div className="card">
+                            <h2 className="card-title">Tasks</h2>
+
+                            <div className="create-task">
+                                <div className="task-input-group">
+                                    <input
+                                        type="text"
+                                        placeholder="Enter task name..."
+                                        value={newTaskTitle}
+                                        onChange={(e) => setNewTaskTitle(e.target.value)}
+                                        onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && createTask()}
+                                        className="task-input"
+                                    />
+                                    <textarea
+                                        placeholder="Enter task description (optional)..."
+                                        value={newTaskDescription}
+                                        onChange={(e) => setNewTaskDescription(e.target.value)}
+                                        className="task-description-input"
+                                        rows="2"
+                                    />
+                                </div>
+                                <button onClick={createTask} className="btn btn-primary">
+                                    <Plus size={18} />
+                                    Create Task
+                                </button>
+                            </div>
+
+                            <div className="tasks-list">
+                                {tasks.length === 0 ? (
+                                    <p className="no-data">No tasks yet. Create one to start tracking!</p>
+                                ) : (
+                                    tasks.map((task) => (
+                                        <div key={task.id} className="task-card-item">
+                                            <div className="task-info">
+                                                <h3>{task.title}</h3>
+                                                {task.description && (
+                                                    <p className="task-description">{task.description}</p>
+                                                )}
+                                                <p className="task-meta">
+                                                    Created: {format(parseISO(task.created_at), 'MMM dd, yyyy HH:mm')}
+                                                </p>
+                                            </div>
+                                            <div className="task-actions">
+                                                <button
+                                                    onClick={() => viewTaskDetails(task)}
+                                                    className="btn btn-info"
+                                                    title="View Details"
+                                                >
+                                                    <Eye size={18} />
+                                                </button>
+                                                <button
+                                                    onClick={() => startTracking(task.id)}
+                                                    className="btn btn-success"
+                                                    disabled={trackerStatus?.running && trackerStatus?.task_id === task.id}
+                                                >
+                                                    <Play size={18} />
+                                                    {trackerStatus?.running && trackerStatus?.task_id === task.id ? 'Active' : 'Start'}
+                                                </button>
+                                                <button
+                                                    onClick={() => deleteTask(task.id)}
+                                                    className="btn btn-danger-outline"
+                                                    title="Delete Task"
+                                                >
+                                                    <Trash2 size={18} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Task Details Modal/Panel (inside folder view) */}
+                        {selectedTask && (
+                            <div className="card task-details-card">
+                                <div className="card-header">
+                                    <h2 className="card-title">
+                                        <Activity size={20} style={{ marginRight: '8px' }} />
+                                        {selectedTask.title}
+                                    </h2>
+                                    <button onClick={() => { setSelectedTask(null); setTaskStats(null) }} className="btn btn-secondary">
+                                        Close
+                                    </button>
                                 </div>
 
-                                {taskStats.apps.length > 0 && (
+                                {taskStats && (
                                     <>
-                                        <h3 className="section-title">
-                                            <PieChart size={20} />
-                                            Time Distribution by App
-                                        </h3>
-                                        <div className="chart-container">
-                                            <ResponsiveContainer width="100%" height={340}>
-                                                <RechartsPie>
-                                                    <Pie
-                                                        data={taskStats.apps}
-                                                        dataKey="total_duration"
-                                                        nameKey="app_name"
-                                                        cx="50%"
-                                                        cy="50%"
-                                                        innerRadius={30}
-                                                        outerRadius={100}
-                                                        labelLine={false}
-                                                        label={pieLabelRenderer}
-                                                        paddingAngle={2}
-                                                    >
-                                                        {taskStats.apps.map((entry, index) => (
-                                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                                        ))}
-                                                    </Pie>
-                                                    <Tooltip formatter={(value) => formatDuration(value)} />
-                                                </RechartsPie>
-                                            </ResponsiveContainer>
+                                        <div className="stats-summary">
+                                            <div className="stat-box">
+                                                <h4>Total Time</h4>
+                                                <p className="stat-value">{formatDuration(taskStats.total_time)}</p>
+                                            </div>
+                                            <div className="stat-box">
+                                                <h4>Activities</h4>
+                                                <p className="stat-value">{taskStats.activity_count}</p>
+                                            </div>
+                                            <div className="stat-box">
+                                                <h4>Apps Used</h4>
+                                                <p className="stat-value">{taskStats.apps.length}</p>
+                                            </div>
                                         </div>
 
-                                        <h3 className="section-title">
-                                            <BarChart3 size={20} />
-                                            App Usage Details
-                                        </h3>
-                                        <div className="chart-container">
-                                            <ResponsiveContainer width="100%" height={300}>
-                                                <BarChart data={taskStats.apps}>
-                                                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff20" />
-                                                    <XAxis dataKey="app_name" stroke="#ffffff80" />
-                                                    <YAxis stroke="#ffffff80" tickFormatter={(value) => formatDuration(value)} />
-                                                    <Tooltip formatter={(value) => formatDuration(value)} />
-                                                    <Bar dataKey="total_duration" fill="#8b5cf6" />
-                                                </BarChart>
-                                            </ResponsiveContainer>
-                                        </div>
-
-                                        <h3 className="section-title">Application Breakdown</h3>
-                                        <div className="apps-breakdown">
-                                            {taskStats.apps.map((app, idx) => (
-                                                <div key={idx} className="app-breakdown-item">
-                                                    <div className="app-breakdown-info">
-                                                        <div className="app-breakdown-icon" style={{ backgroundColor: COLORS[idx % COLORS.length] }}>
-                                                            {getInitials(app.app_name)}
-                                                        </div>
-                                                        <div>
-                                                            <h4>{app.app_name}</h4>
-                                                            <p>{app.session_count} session{app.session_count > 1 ? 's' : ''}</p>
-                                                        </div>
-                                                    </div>
-                                                    <div className="app-breakdown-time">
-                                                        {formatDuration(app.total_duration)}
-                                                    </div>
+                                        {taskStats.apps.length > 0 && (
+                                            <>
+                                                <h3 className="section-title">
+                                                    <PieChart size={20} />
+                                                    Time Distribution by App
+                                                </h3>
+                                                <div className="chart-container">
+                                                    <ResponsiveContainer width="100%" height={340}>
+                                                        <RechartsPie>
+                                                            <Pie
+                                                                data={taskStats.apps}
+                                                                dataKey="total_duration"
+                                                                nameKey="app_name"
+                                                                cx="50%"
+                                                                cy="50%"
+                                                                innerRadius={30}
+                                                                outerRadius={100}
+                                                                labelLine={false}
+                                                                label={pieLabelRenderer}
+                                                                paddingAngle={2}
+                                                            >
+                                                                {taskStats.apps.map((entry, index) => (
+                                                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                                                ))}
+                                                            </Pie>
+                                                            <Tooltip formatter={(value) => formatDuration(value)} />
+                                                        </RechartsPie>
+                                                    </ResponsiveContainer>
                                                 </div>
-                                            ))}
-                                        </div>
+
+                                                <h3 className="section-title">
+                                                    <BarChart3 size={20} />
+                                                    App Usage Details
+                                                </h3>
+                                                <div className="chart-container">
+                                                    <ResponsiveContainer width="100%" height={300}>
+                                                        <BarChart data={taskStats.apps}>
+                                                            <CartesianGrid strokeDasharray="3 3" stroke="#ffffff20" />
+                                                            <XAxis dataKey="app_name" stroke="#ffffff80" />
+                                                            <YAxis stroke="#ffffff80" tickFormatter={(value) => formatDuration(value)} />
+                                                            <Tooltip formatter={(value) => formatDuration(value)} />
+                                                            <Bar dataKey="total_duration" fill="#8b5cf6" />
+                                                        </BarChart>
+                                                    </ResponsiveContainer>
+                                                </div>
+
+                                                <h3 className="section-title">Application Breakdown</h3>
+                                                <div className="apps-breakdown">
+                                                    {taskStats.apps.map((app, idx) => (
+                                                        <div key={idx} className="app-breakdown-item">
+                                                            <div className="app-breakdown-info">
+                                                                <div className="app-breakdown-icon" style={{ backgroundColor: COLORS[idx % COLORS.length] }}>
+                                                                    {getInitials(app.app_name)}
+                                                                </div>
+                                                                <div>
+                                                                    <h4>{app.app_name}</h4>
+                                                                    <p>{app.session_count} session{app.session_count > 1 ? 's' : ''}</p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="app-breakdown-time">
+                                                                {formatDuration(app.total_duration)}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </>
+                                        )}
                                     </>
                                 )}
-                            </>
+                            </div>
+                        )}
+                    </>
+                )}
+
+                {/* Timeline for folder overview (when no folder selected) */}
+                {!inFolderView && (
+                    <div className="card">
+                        <div className="card-header">
+                            <h2 className="card-title">Timeline for {selectedDate}</h2>
+                            <input
+                                type="date"
+                                value={selectedDate}
+                                onChange={(e) => setSelectedDate(e.target.value)}
+                                className="date-picker"
+                            />
+                        </div>
+
+                        {Object.keys(timelineByTask).length === 0 ? (
+                            <p className="no-data">No activities tracked yet.</p>
+                        ) : (
+                            Object.entries(timelineByTask).map(([taskId, activities]) => {
+                                const task = tasks.find(t => t.id === parseInt(taskId))
+                                const isCollapsed = collapsedTimelines[taskId]
+                                return (
+                                    <div key={taskId} className="task-timeline">
+                                        <div className="timeline-task-header">
+                                            <h3 className="timeline-task-title">
+                                                Task: {task?.title || `ID ${taskId}`} ({activities.length} activities)
+                                            </h3>
+                                            <button
+                                                onClick={() => toggleTimeline(taskId)}
+                                                className="btn btn-secondary btn-collapse"
+                                                title={isCollapsed ? 'Expand' : 'Collapse'}
+                                            >
+                                                {isCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+                                            </button>
+                                        </div>
+                                        {!isCollapsed && (
+                                            <div className="timeline">
+                                                {activities.map((activity) => (
+                                                    <div key={activity.id} className="timeline-item">
+                                                        <div className="timeline-time">{formatTime(activity.start_time)}</div>
+                                                        <div className="timeline-icon">
+                                                            <div className="timeline-initials">{getInitials(activity.app_name)}</div>
+                                                        </div>
+                                                        <div className="timeline-content">
+                                                            <h4>{activity.app_name}</h4>
+                                                            {activity.duration && (
+                                                                <span className="timeline-duration">{formatDuration(activity.duration)}</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )
+                            })
                         )}
                     </div>
                 )}
-
-                <div className="card">
-                    <div className="card-header">
-                        <h2 className="card-title">Timeline for {selectedDate}</h2>
-                        <input
-                            type="date"
-                            value={selectedDate}
-                            onChange={(e) => setSelectedDate(e.target.value)}
-                            className="date-picker"
-                        />
-                    </div>
-
-                    {Object.keys(timelineByTask).length === 0 ? (
-                        <p className="no-data">No activities tracked yet.</p>
-                    ) : (
-                        Object.entries(timelineByTask).map(([taskId, activities]) => {
-                            const task = tasks.find(t => t.id === parseInt(taskId))
-                            const isCollapsed = collapsedTimelines[taskId]
-                            return (
-                                <div key={taskId} className="task-timeline">
-                                    <div className="timeline-task-header">
-                                        <h3 className="timeline-task-title">
-                                            Task: {task?.title || `ID ${taskId}`} ({activities.length} activities)
-                                        </h3>
-                                        <button
-                                            onClick={() => toggleTimeline(taskId)}
-                                            className="btn btn-secondary btn-collapse"
-                                            title={isCollapsed ? 'Expand' : 'Collapse'}
-                                        >
-                                            {isCollapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
-                                        </button>
-                                    </div>
-                                    {!isCollapsed && (
-                                        <div className="timeline">
-                                            {activities.map((activity) => (
-                                                <div key={activity.id} className="timeline-item">
-                                                    <div className="timeline-time">{formatTime(activity.start_time)}</div>
-                                                    <div className="timeline-icon">
-                                                        <div className="timeline-initials">{getInitials(activity.app_name)}</div>
-                                                    </div>
-                                                    <div className="timeline-content">
-                                                        <h4>{activity.app_name}</h4>
-                                                        {activity.duration && (
-                                                            <span className="timeline-duration">{formatDuration(activity.duration)}</span>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            )
-                        })
-                    )}
-                </div>
             </main>
 
             <footer className="footer">
