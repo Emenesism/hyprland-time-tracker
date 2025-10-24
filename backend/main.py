@@ -718,6 +718,282 @@ async def export_pdf(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/export/folder/{folder_id}/pdf")
+async def export_folder_pdf(folder_id: int):
+    """Generate and download PDF report for all tasks in a folder"""
+    try:
+        folder = db.get_folder(folder_id)
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.lib import colors
+        from reportlab.lib.units import inch
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        import io
+
+        # Get data for folder (all dates)
+        data = db.get_export_data_for_folder(folder_id)
+
+        # Create PDF in memory
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
+
+        elements = []
+        styles = getSampleStyleSheet()
+
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=24,
+            textColor=colors.HexColor('#8b5cf6'),
+            spaceAfter=30,
+            alignment=TA_CENTER
+        )
+
+        heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=styles['Heading2'],
+            fontSize=16,
+            textColor=colors.HexColor('#6366f1'),
+            spaceAfter=12,
+            spaceBefore=20
+        )
+
+        subheading_style = ParagraphStyle(
+            'CustomSubHeading',
+            parent=styles['Heading3'],
+            fontSize=12,
+            textColor=colors.HexColor('#8b5cf6'),
+            spaceAfter=8,
+            spaceBefore=12
+        )
+
+        # Folder title page: large folder name and total time only
+        # Create a prominent folder title style
+        folder_title_style = ParagraphStyle(
+            'FolderTitle',
+            parent=styles['Heading1'],
+            fontSize=36,
+            textColor=colors.HexColor('#8b5cf6'),
+            alignment=TA_CENTER,
+            spaceAfter=12
+        )
+
+        # Calculate overall total across all days/tasks
+        def format_duration(seconds):
+            if not seconds:
+                return "0m"
+            hours = seconds // 3600
+            minutes = (seconds % 3600) // 60
+            if hours > 0:
+                return f"{hours}h {minutes}m"
+            return f"{minutes}m"
+
+        overall_total = 0
+        for day in data:
+            for task in day.get('tasks', []):
+                overall_total += int(task.get('total_time') or 0)
+
+        # Add folder name centered and bold
+        folder_title = Paragraph(f"<b>{folder['name']}</b>", folder_title_style)
+        elements.append(Spacer(1, 0.8*inch))
+        elements.append(folder_title)
+        elements.append(Spacer(1, 0.3*inch))
+
+        # Add overall total time under the title (centered)
+        total_style = ParagraphStyle('TotalStyle', parent=styles['Normal'], fontSize=14, alignment=TA_CENTER)
+        elements.append(Paragraph(f"Total time: <b>{format_duration(overall_total)}</b>", total_style))
+        elements.append(PageBreak())
+
+        # --- Detailed per-day sections follow ---
+        if data:
+            for day_data in data:
+                date_str = day_data['date']
+                tasks = day_data['tasks']
+
+                day_heading = Paragraph(f"📅 {date_str}", heading_style)
+                elements.append(day_heading)
+
+                if not tasks:
+                    elements.append(Paragraph("No activities tracked.", styles['Normal']))
+                    elements.append(Spacer(1, 0.2*inch))
+                    continue
+
+                for task_data in tasks:
+                    task_title = task_data['task_title']
+                    task_description = task_data.get('task_description')
+                    apps = task_data['apps']
+                    total_time = task_data['total_time']
+
+                    task_heading = Paragraph(
+                        f"Task: {task_title} (Total: {format_duration(total_time)})",
+                        subheading_style
+                    )
+                    elements.append(task_heading)
+
+                    if task_description:
+                        description_para = Paragraph(f"<i>{task_description}</i>", styles['Normal'])
+                        elements.append(description_para)
+                        elements.append(Spacer(1, 0.1*inch))
+
+                    table_data = [['Application', 'Time Spent']]
+                    for app in apps:
+                        table_data.append([
+                            app['app_name'],
+                            format_duration(app['duration']),
+                        ])
+
+                    table = Table(table_data, colWidths=[3*inch, 1.5*inch, 1*inch])
+                    table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#8b5cf6')),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 10),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f3f4f6')])
+                    ]))
+
+                    elements.append(table)
+                    elements.append(Spacer(1, 0.15*inch))
+
+                if day_data != data[-1]:
+                    elements.append(PageBreak())
+
+        doc.build(elements)
+
+        pdf_data = buffer.getvalue()
+        buffer.close()
+
+        from fastapi.responses import Response
+
+        filename = f"folder_{folder_id}_{folder['name']}.pdf"
+        # sanitize filename optionally
+        filename = filename.replace(' ', '_')
+
+        return Response(
+            content=pdf_data,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="reportlab not installed. Run: pip install reportlab"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating folder PDF: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/export/folder/{folder_id}/details.pdf")
+async def export_folder_details_pdf(folder_id: int):
+    """Generate a PDF containing only folder title (first page) and then
+    a clean list of task name + description (no durations) for all tasks in the folder."""
+    try:
+        folder = db.get_folder(folder_id)
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+
+        # Fetch tasks for the folder (no limit or large limit)
+        tasks = db.get_tasks(limit=1000, folder_id=folder_id)
+
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.units import inch
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        import io
+
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.8*inch, bottomMargin=0.5*inch)
+
+        elements = []
+        styles = getSampleStyleSheet()
+
+        # Large folder title style
+        folder_title_style = ParagraphStyle(
+            'FolderTitle',
+            parent=styles['Heading1'],
+            fontSize=36,
+            textColor=colors.HexColor('#8b5cf6'),
+            alignment=TA_CENTER,
+            spaceAfter=12
+        )
+
+        # Task title style (fancy)
+        task_title_style = ParagraphStyle(
+            'TaskTitle',
+            parent=styles['Heading2'],
+            fontSize=16,
+            fontName='Helvetica-Bold',
+            textColor=colors.HexColor('#111111'),
+            spaceAfter=6,
+            leftIndent=6
+        )
+
+        # Task description style (darker for readability)
+        task_desc_style = ParagraphStyle(
+            'TaskDesc',
+            parent=styles['Normal'],
+            fontSize=11,
+            fontName='Helvetica',
+            textColor=colors.HexColor('#333333'),
+            leftIndent=8,
+            spaceAfter=12
+        )
+
+        # First page: folder name only
+        elements.append(Spacer(1, 1.0*inch))
+        elements.append(Paragraph(f"<b>{folder['name']}</b>", folder_title_style))
+        elements.append(PageBreak())
+
+        # Then each task: title + description (no durations)
+        if not tasks:
+            elements.append(Paragraph("No tasks in this folder.", styles['Normal']))
+        else:
+            for t in tasks:
+                title = t.get('title') or f"Task {t.get('id')}"
+                desc = t.get('description') or ''
+                elements.append(Paragraph(title, task_title_style))
+                if desc:
+                    # Wrap description in italic for a 'fancy' look
+                    elements.append(Paragraph(f"<i>{desc}</i>", task_desc_style))
+                else:
+                    # Add a small spacer if no description to keep spacing consistent
+                    elements.append(Spacer(1, 0.1*inch))
+
+        doc.build(elements)
+
+        pdf_data = buffer.getvalue()
+        buffer.close()
+
+        from fastapi.responses import Response
+
+        filename = f"folder_{folder_id}_{folder['name']}_details.pdf".replace(' ', '_')
+        return Response(
+            content=pdf_data,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except ImportError:
+        raise HTTPException(status_code=500, detail="reportlab not installed. Run: pip install reportlab")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating folder details PDF: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Serve frontend static files
 if config.FRONTEND_BUILD_PATH.exists():
     app.mount("/assets", StaticFiles(directory=config.FRONTEND_BUILD_PATH / "assets"), name="assets")
