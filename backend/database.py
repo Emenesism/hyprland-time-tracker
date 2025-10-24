@@ -1072,3 +1072,101 @@ class Database:
 
         return result
         return deleted
+
+    def get_export_data_for_folder(self, folder_id: int) -> List[Dict]:
+        """
+        Get activities grouped by date -> task -> app for a specific folder
+        Returns: List of days, each with tasks, each task with apps and durations
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        # Get all activities for tasks in the specified folder
+        cursor.execute("""
+            SELECT 
+                a.date,
+                a.task_id,
+                t.title as task_title,
+                t.description as task_description,
+                a.app_name,
+                a.window_title,
+                a.duration
+            FROM activities a
+            LEFT JOIN tasks t ON a.task_id = t.id
+            WHERE t.folder_id = ?
+            AND a.duration IS NOT NULL
+            ORDER BY a.date ASC, a.task_id, a.start_time
+        """, (folder_id,))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        # Structure: {date: {task_id: {app_name: [durations]}}}
+        data_structure = {}
+
+        for row in rows:
+            date = row['date']
+            task_id = row['task_id']
+            task_title = row['task_title'] or f"Task {task_id}"
+            task_description = row['task_description']
+            app_name = normalize_app_name(row['app_name'], row['window_title'])
+            duration = row['duration']
+
+            # Initialize nested structure
+            if date not in data_structure:
+                data_structure[date] = {}
+            
+            if task_id not in data_structure[date]:
+                data_structure[date][task_id] = {
+                    'task_title': task_title,
+                    'task_description': task_description,
+                    'apps': {}
+                }
+            
+            if app_name not in data_structure[date][task_id]['apps']:
+                data_structure[date][task_id]['apps'][app_name] = {
+                    'durations': [],
+                    'session_count': 0
+                }
+            
+            data_structure[date][task_id]['apps'][app_name]['durations'].append(duration)
+            data_structure[date][task_id]['apps'][app_name]['session_count'] += 1
+
+        # Convert to final format
+        result = []
+        for date in sorted(data_structure.keys()):
+            day_data = {
+                'date': date,
+                'tasks': []
+            }
+
+            for task_id, task_info in data_structure[date].items():
+                task_data = {
+                    'task_id': task_id,
+                    'task_title': task_info['task_title'],
+                    'task_description': task_info['task_description'],
+                    'apps': [],
+                    'total_time': 0
+                }
+
+                for app_name, app_info in task_info['apps'].items():
+                    total_duration = sum(app_info['durations'])
+                    task_data['total_time'] += total_duration
+                    
+                    task_data['apps'].append({
+                        'app_name': app_name,
+                        'duration': total_duration,
+                        'session_count': app_info['session_count']
+                    })
+                
+                # Sort apps by duration (descending)
+                task_data['apps'].sort(key=lambda x: x['duration'], reverse=True)
+                
+                day_data['tasks'].append(task_data)
+            
+            # Sort tasks by total time (descending)
+            day_data['tasks'].sort(key=lambda x: x['total_time'], reverse=True)
+            
+            result.append(day_data)
+
+        return result
