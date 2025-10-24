@@ -25,13 +25,7 @@ function App() {
     const [selectedTask, setSelectedTask] = useState(null)
     const [taskStats, setTaskStats] = useState(null)
 
-    // Initialize export dates
-    const today = new Date()
-    const weekAgo = new Date()
-    weekAgo.setDate(today.getDate() - 7)
-
-    const [exportStartDate, setExportStartDate] = useState(format(weekAgo, 'yyyy-MM-dd'))
-    const [exportEndDate, setExportEndDate] = useState(format(today, 'yyyy-MM-dd'))
+    // (Export to PDF feature removed)
 
     useEffect(() => {
         fetchData()
@@ -269,36 +263,62 @@ function App() {
         setSelectedFolderId(null)
     }
 
-    const exportToPDF = async () => {
+    // Export all tasks for a folder as a PDF
+    const exportFolderPDF = async (folderId) => {
+        if (!folderId) return
         try {
-            const response = await fetch(
-                `${API_BASE}/export/pdf?start_date=${exportStartDate}&end_date=${exportEndDate}`,
-                { method: 'POST' }
-            )
+            const response = await fetch(`${API_BASE}/export/folder/${folderId}/pdf`)
 
             if (!response.ok) {
-                throw new Error('Export failed')
+                const errorData = await response.json().catch(() => ({}))
+                alert(errorData.detail || 'Failed to export PDF')
+                return
             }
 
-            // Create blob from response
             const blob = await response.blob()
-
-            // Create download link
             const url = window.URL.createObjectURL(blob)
             const a = document.createElement('a')
             a.href = url
-            a.download = `timetracker_${exportStartDate}_${exportEndDate}.pdf`
+            a.download = `${selectedFolder?.name || 'folder'}.pdf`
             document.body.appendChild(a)
             a.click()
-
-            // Cleanup
+            a.remove()
             window.URL.revokeObjectURL(url)
-            document.body.removeChild(a)
         } catch (error) {
-            console.error('Error exporting PDF:', error)
-            alert('Failed to export PDF. Please try again.')
+            console.error('Export error', error)
+            alert('Export failed')
         }
     }
+
+    // Export folder tasks as a detail-only PDF (first page folder name only,
+    // subsequent pages list task title + description, no durations)
+    const exportFolderDetailsPDF = async (folderId) => {
+        if (!folderId) return
+        try {
+            const response = await fetch(`${API_BASE}/export/folder/${folderId}/details.pdf`)
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}))
+                alert(errorData.detail || 'Failed to export details PDF')
+                return
+            }
+
+            const blob = await response.blob()
+            const url = window.URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `${selectedFolder?.name || 'folder'}_details.pdf`
+            document.body.appendChild(a)
+            a.click()
+            a.remove()
+            window.URL.revokeObjectURL(url)
+        } catch (error) {
+            console.error('Export details error', error)
+            alert('Export failed')
+        }
+    }
+
+    // exportToPDF function removed
 
     const formatDuration = (seconds) => {
         if (!seconds) return '0s'
@@ -396,39 +416,7 @@ function App() {
                     </div>
                 )}
 
-                {/* Export Section */}
-                <div className="card export-section">
-                    <h2 className="card-title">
-                        <Download size={20} style={{ marginRight: '8px' }} />
-                        Export Report
-                    </h2>
-                    <div className="export-controls">
-                        <div className="date-range">
-                            <div className="date-input-group">
-                                <label>From:</label>
-                                <input
-                                    type="date"
-                                    value={exportStartDate}
-                                    onChange={(e) => setExportStartDate(e.target.value)}
-                                    className="date-picker"
-                                />
-                            </div>
-                            <div className="date-input-group">
-                                <label>To:</label>
-                                <input
-                                    type="date"
-                                    value={exportEndDate}
-                                    onChange={(e) => setExportEndDate(e.target.value)}
-                                    className="date-picker"
-                                />
-                            </div>
-                        </div>
-                        <button onClick={exportToPDF} className="btn btn-export">
-                            <Download size={18} />
-                            Export to PDF
-                        </button>
-                    </div>
-                </div>
+                {/* Export to PDF UI removed */}
 
                 {!inFolderView ? (
                     /* Folders Overview */
@@ -553,10 +541,37 @@ function App() {
                                     <ArrowLeft size={18} />
                                     Back to Folders
                                 </button>
-                                <h2 className="card-title">
-                                    <FolderOpen size={20} style={{ marginRight: '8px' }} />
-                                    {selectedFolder?.name || 'Folder'}
-                                </h2>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%', justifyContent: 'space-between' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                        <h2 className="card-title" style={{ margin: 0, display: 'flex', alignItems: 'center' }}>
+                                            <FolderOpen size={20} style={{ marginRight: '8px' }} />
+                                            {selectedFolder?.name || 'Folder'}
+                                        </h2>
+                                    </div>
+
+                                    <div className="mehr-section">
+                                        <div className="mehr-title">Mehr</div>
+                                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                            <button
+                                                className="btn btn-export"
+                                                onClick={() => exportFolderPDF(selectedFolderId)}
+                                                title="Export folder to PDF"
+                                            >
+                                                <Download size={16} style={{ marginRight: '6px' }} />
+                                                Export PDF
+                                            </button>
+
+                                            <button
+                                                className="btn btn-export"
+                                                onClick={() => exportFolderDetailsPDF(selectedFolderId)}
+                                                title="Export folder tasks (details only) as PDF"
+                                            >
+                                                <Download size={16} style={{ marginRight: '6px' }} />
+                                                Export Details
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
