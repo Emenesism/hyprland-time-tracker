@@ -397,23 +397,42 @@ function App() {
             </header>
 
             <main className="main">
-                {summaryStats && (
+                {inFolderView && selectedFolder ? (
                     <div className="card highlight-card">
                         <div className="highlight-main">
                             <div className="highlight-icon">
-                                <Calendar size={32} />
+                                <Folder size={32} />
                             </div>
                             <div>
-                                <p className="highlight-label">Last 30 Days</p>
-                                <p className="highlight-value">{last30DaysHours} hrs</p>
-                                <p className="highlight-muted">{formatDuration(last30DaysSeconds)} tracked</p>
+                                <p className="highlight-label">{selectedFolder.name}</p>
+                                <p className="highlight-value">{formatHours(selectedFolder.total_duration)} hrs</p>
+                                <p className="highlight-muted">{formatDuration(selectedFolder.total_duration)} tracked · {selectedFolder.task_count} task{selectedFolder.task_count !== 1 ? 's' : ''}</p>
                             </div>
                         </div>
                         <div className="highlight-meta">
-                            <span className="highlight-meta-label">Avg / day</span>
-                            <span className="highlight-meta-value">{last30DaysAverageHours} hrs</span>
+                            <span className="highlight-meta-label">Folder</span>
+                            <span className="highlight-meta-value">{selectedFolder.task_count} tasks</span>
                         </div>
                     </div>
+                ) : (
+                    summaryStats && (
+                        <div className="card highlight-card">
+                            <div className="highlight-main">
+                                <div className="highlight-icon">
+                                    <Calendar size={32} />
+                                </div>
+                                <div>
+                                    <p className="highlight-label">Last 30 Days</p>
+                                    <p className="highlight-value">{last30DaysHours} hrs</p>
+                                    <p className="highlight-muted">{formatDuration(last30DaysSeconds)} tracked</p>
+                                </div>
+                            </div>
+                            <div className="highlight-meta">
+                                <span className="highlight-meta-label">Avg / day</span>
+                                <span className="highlight-meta-value">{last30DaysAverageHours} hrs</span>
+                            </div>
+                        </div>
+                    )
                 )}
 
                 {/* Export to PDF UI removed */}
