@@ -8,7 +8,7 @@
   :root {
     --background: 10 10 15;
     --foreground: 248 250 252;
-    
+
     color-scheme: dark;
   }
 
@@ -26,7 +26,7 @@
   body {
     @apply bg-background text-text-primary font-sans;
     min-height: 100vh;
-    background: 
+    background:
       radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.15), transparent),
       linear-gradient(to bottom, #0a0a0f, #12121a);
     background-attachment: fixed;
@@ -48,6 +48,7 @@
 }
 
 @layer components {
+
   /* Glass effect */
   .glass {
     @apply bg-surface-1/80 backdrop-blur-md border border-border;
@@ -77,23 +78,23 @@
 
   /* Shimmer loading effect */
   .shimmer {
-    background: linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 0) 0%,
-      rgba(255, 255, 255, 0.05) 50%,
-      rgba(255, 255, 255, 0) 100%
-    );
+    background: linear-gradient(90deg,
+        rgba(255, 255, 255, 0) 0%,
+        rgba(255, 255, 255, 0.05) 50%,
+        rgba(255, 255, 255, 0) 100%);
     background-size: 200% 100%;
     animation: shimmer 1.5s infinite;
   }
 }
 
 @layer utilities {
+
   /* Hide scrollbar but keep functionality */
   .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
@@ -103,17 +104,21 @@
     scrollbar-width: thin;
     scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
   }
+
   .scrollbar-custom::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
+
   .scrollbar-custom::-webkit-scrollbar-track {
     background: transparent;
   }
+
   .scrollbar-custom::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.1);
     border-radius: 3px;
   }
+
   .scrollbar-custom::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.2);
   }
@@ -124,6 +129,7 @@
   0% {
     background-position: -200% 0;
   }
+
   100% {
     background-position: 200% 0;
   }
@@ -134,6 +140,7 @@
     transform: scale(0.8);
     opacity: 1;
   }
+
   100% {
     transform: scale(2);
     opacity: 0;
