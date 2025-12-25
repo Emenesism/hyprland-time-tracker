@@ -475,6 +475,40 @@ class Database:
         logger.info(f"Deleted task {task_id}")
         return deleted
 
+    def update_task(self, task_id: int, title: Optional[str] = None, description: Optional[str] = None) -> bool:
+        """Update task details"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        updates = []
+        params = []
+        if title is not None:
+            updates.append("title = ?")
+            params.append(title)
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+
+        if not updates:
+            conn.close()
+            return False
+
+        updates.append("updated_at = ?")
+        params.append(datetime.now())
+        params.append(task_id)
+
+        query = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?"
+        cursor.execute(query, tuple(params))
+        updated = cursor.rowcount > 0
+
+        conn.commit()
+        conn.close()
+        
+        if updated:
+            logger.info(f"Updated task {task_id}")
+        
+        return updated
+
     def get_task_timeline(self, task_id: int, limit: Optional[int] = None) -> List[Dict]:
         """Get timeline entries for a specific task"""
         conn = self.get_connection()
