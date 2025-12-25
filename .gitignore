@@ -19,6 +19,9 @@ backend/*.log
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend-cute/node_modules/
+frontend-cute/dist/
+frontend-cute/.vite/
 
 # Ignore IDE and editor files
 .vscode/
