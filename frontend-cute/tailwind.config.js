@@ -8,30 +8,31 @@ export default {
         extend: {
             colors: {
                 // Cute pastel backgrounds
-                background: '#fef7f7',
+                background: 'rgb(var(--bg-page) / <alpha-value>)',
                 surface: {
-                    1: '#fff5f5',
-                    2: '#fff0f3',
-                    3: '#ffe4ec',
+                    1: 'rgb(var(--bg-surface-1) / <alpha-value>)',
+                    2: 'rgb(var(--bg-surface-2) / <alpha-value>)',
+                    3: 'rgb(var(--bg-surface-2) / <alpha-value>)', // fallback
                 },
                 // Adorable brand colors
                 primary: {
-                    DEFAULT: '#f472b6',
-                    hover: '#ec4899',
-                    light: '#fbcfe8',
-                    muted: 'rgba(244, 114, 182, 0.15)',
+                    DEFAULT: 'rgb(var(--color-primary) / <alpha-value>)',
+                    hover: 'rgb(var(--color-primary-hover) / <alpha-value>)',
+                    light: 'rgb(var(--color-primary-light) / <alpha-value>)',
+                    muted: 'rgb(var(--color-primary) / 0.15)',
                 },
                 secondary: {
-                    DEFAULT: '#a78bfa',
-                    hover: '#8b5cf6',
-                    light: '#ddd6fe',
-                    muted: 'rgba(167, 139, 250, 0.15)',
+                    DEFAULT: 'rgb(var(--color-secondary) / <alpha-value>)',
+                    hover: 'rgb(var(--color-secondary-hover) / <alpha-value>)',
+                    light: 'rgb(var(--color-secondary-light) / <alpha-value>)',
+                    muted: 'rgb(var(--color-secondary) / 0.15)',
                 },
                 accent: {
-                    DEFAULT: '#34d399',
-                    light: '#a7f3d0',
-                    muted: 'rgba(52, 211, 153, 0.15)',
+                    DEFAULT: 'rgb(var(--color-accent) / <alpha-value>)',
+                    light: 'rgb(var(--color-accent) / 0.3)', // derived
+                    muted: 'rgb(var(--color-accent) / 0.15)',
                 },
+                // Static colors for specific uses
                 coral: {
                     DEFAULT: '#fb7185',
                     light: '#fecdd3',
@@ -69,13 +70,13 @@ export default {
                     muted: 'rgba(251, 113, 133, 0.2)',
                 },
                 // Text colors
-                'text-primary': '#4a3f51',
-                'text-secondary': '#7c7289',
-                'text-muted': '#a89cb3',
+                'text-primary': 'rgb(var(--color-text-primary) / <alpha-value>)',
+                'text-secondary': 'rgb(var(--color-text-secondary) / <alpha-value>)',
+                'text-muted': 'rgb(var(--color-text-muted) / <alpha-value>)',
                 // Border colors
                 border: {
-                    DEFAULT: 'rgba(244, 114, 182, 0.2)',
-                    active: 'rgba(244, 114, 182, 0.4)',
+                    DEFAULT: 'rgb(var(--color-border) / 0.2)',
+                    active: 'rgb(var(--color-border) / 0.4)',
                 },
             },
             fontFamily: {

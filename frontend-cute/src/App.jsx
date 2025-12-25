@@ -38,6 +38,20 @@ export default function App() {
     const [selectedTask, setSelectedTask] = useState(null)
     const [taskStats, setTaskStats] = useState(null)
 
+    // Theme state
+    const [currentTheme, setCurrentTheme] = useState(() => {
+        if (typeof window !== 'undefined') {
+            return localStorage.getItem('theme') || 'theme-sakura'
+        }
+        return 'theme-sakura'
+    })
+
+    // Apply theme
+    useEffect(() => {
+        document.body.className = currentTheme
+        localStorage.setItem('theme', currentTheme)
+    }, [currentTheme])
+
     // Derived state
     const selectedFolder = useMemo(
         () => folders.find((f) => f.id === selectedFolderId) || null,
@@ -238,7 +252,7 @@ export default function App() {
     if (loading) {
         return (
             <div className="min-h-screen flex flex-col">
-                <Header trackerStatus={null} />
+                <Header trackerStatus={null} currentTheme={currentTheme} onThemeChange={setCurrentTheme} />
                 <main className="flex-1 max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
                     <SkeletonList count={4} />
                 </main>
@@ -248,7 +262,7 @@ export default function App() {
 
     return (
         <div className="min-h-screen flex flex-col">
-            <Header trackerStatus={trackerStatus} />
+            <Header trackerStatus={trackerStatus} currentTheme={currentTheme} onThemeChange={setCurrentTheme} />
 
             <main className="flex-1 max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
                 <motion.div
