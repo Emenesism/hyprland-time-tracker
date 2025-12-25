@@ -13,6 +13,7 @@ import { TrackingStatus } from '@/components/tracking/TrackingStatus'
 import { SummaryStatsCard } from '@/components/stats/StatsCard'
 import { MotivationalQuotes } from '@/components/quotes/MotivationalQuotes'
 import { FocusFlow } from '@/components/stats/FocusFlow'
+import { FocusGarden } from '@/components/stats/FocusGarden'
 
 // Utils
 import { trackerAPI, statsAPI, foldersAPI, tasksAPI } from '@/lib/api'
@@ -38,6 +39,7 @@ export default function App() {
     const [selectedTask, setSelectedTask] = useState(null)
     const [taskStats, setTaskStats] = useState(null)
     const [showFocusFlow, setShowFocusFlow] = useState(false)
+    const [showFocusGarden, setShowFocusGarden] = useState(false)
 
     // Theme state
     const [currentTheme, setCurrentTheme] = useState(() => {
@@ -258,6 +260,7 @@ export default function App() {
                     currentTheme={currentTheme}
                     onThemeChange={setCurrentTheme}
                     onToggleFocusFlow={() => setShowFocusFlow(true)}
+                    onToggleFocusGarden={() => setShowFocusGarden(true)}
                 />
                 <main className="flex-1 max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
                     <SkeletonList count={4} />
@@ -273,9 +276,11 @@ export default function App() {
                 currentTheme={currentTheme}
                 onThemeChange={setCurrentTheme}
                 onToggleFocusFlow={() => setShowFocusFlow(true)}
+                onToggleFocusGarden={() => setShowFocusGarden(true)}
             />
 
             <FocusFlow isOpen={showFocusFlow} onClose={() => setShowFocusFlow(false)} />
+            <FocusGarden isOpen={showFocusGarden} onClose={() => setShowFocusGarden(false)} />
 
             <main className="flex-1 max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
                 <motion.div
