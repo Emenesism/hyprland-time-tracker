@@ -1,9 +1,9 @@
-import { Sparkles, Activity } from 'lucide-react'
+import { Sparkles, Activity, Sprout } from 'lucide-react'
 import { Badge, Button } from '@/components/ui'
 import { ThemeSwitcher } from '@/components/ui/ThemeSwitcher'
 import { cn } from '@/lib/utils'
 
-export function Header({ trackerStatus, currentTheme, onThemeChange, onToggleFocusFlow }) {
+export function Header({ trackerStatus, currentTheme, onThemeChange, onToggleFocusFlow, onToggleFocusGarden }) {
     const isActive = trackerStatus?.running
 
     return (
@@ -25,6 +25,11 @@ export function Header({ trackerStatus, currentTheme, onThemeChange, onToggleFoc
                     </div>
 
                     <div className="flex items-center gap-3">
+                        <Button variant="ghost" size="sm" onClick={onToggleFocusGarden} className="gap-2" title="Garden of Focus">
+                            <Sprout className="h-4 w-4" />
+                            <span className="hidden sm:inline">Garden</span>
+                        </Button>
+
                         <Button variant="ghost" size="sm" onClick={onToggleFocusFlow} className="gap-2" title="Focus Flow">
                             <Activity className="h-4 w-4" />
                             <span className="hidden sm:inline">Flow</span>
