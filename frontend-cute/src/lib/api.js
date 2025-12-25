@@ -33,6 +33,11 @@ export const trackerAPI = {
 export const statsAPI = {
     getSummary: () => fetchJSON(`${API_BASE}/stats/summary`),
     getTimeline: (date) => fetchJSON(`${API_BASE}/timeline?date=${date}`),
+
+    getYearStats: (year) => {
+        const query = year ? `?year=${year}` : ''
+        return fetchJSON(`${API_BASE}/stats/year${query}`)
+    },
 }
 
 // Folders API
