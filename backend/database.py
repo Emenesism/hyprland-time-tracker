@@ -788,6 +788,35 @@ class Database:
         results.sort(key=lambda x: (x['date'], x['total_duration']), reverse=True)
         return results
 
+    def get_year_stats(self, year: int) -> List[Dict]:
+        """Get daily total duration for a specific year"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        # SQLite substring for year from date string YYYY-MM-DD
+        year_str = str(year)
+        
+        cursor.execute("""
+            SELECT date, SUM(duration) as total_duration, COUNT(*) as activity_count
+            FROM activities 
+            WHERE strftime('%Y', date) = ? AND duration IS NOT NULL
+            GROUP BY date
+            ORDER BY date ASC
+        """, (year_str,))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        results = []
+        for row in rows:
+            results.append({
+                'date': row['date'],
+                'total_duration': int(row['total_duration'] or 0),
+                'activity_count': row['activity_count']
+            })
+            
+        return results
+
     def get_timeline(self, date: Optional[str] = None, limit: Optional[int] = None) -> List[Dict]:
         """Get activity timeline for a specific day"""
         if date is None:
