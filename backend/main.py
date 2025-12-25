@@ -318,6 +318,27 @@ async def rename_folder(folder_id: int, request: RenameFolderRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+class UpdateTaskRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+
+@app.patch("/api/tasks/{task_id}")
+async def update_task(task_id: int, task_data: UpdateTaskRequest):
+    """Update task details"""
+    try:
+        updated = db.update_task(task_id, task_data.title, task_data.description)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        task = db.get_task(task_id)
+        return task
+    except Exception as e:
+        logger.error(f"Error updating task: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.delete("/api/folders/{folder_id}")
 async def delete_folder(folder_id: int):
     """Delete a folder (tasks reassigned to default)"""
