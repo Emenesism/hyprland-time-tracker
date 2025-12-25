@@ -74,7 +74,8 @@ echo "Step 3: Installing systemd service..."
 mkdir -p ~/.config/systemd/user
 
 # Copy service file and replace placeholder with actual home directory
-SERVICE_FILE="$SCRIPT_DIR/timetracker.service"
+SERVICE_FILE="$SCRIPT_DIR/ls
+.service"
 TARGET_SERVICE="$HOME/.config/systemd/user/timetracker.service"
 
 # Replace %h with actual home directory
