@@ -12,6 +12,7 @@ import { TaskDetailsPanel } from '@/components/tasks/TaskDetailsPanel'
 import { TrackingStatus } from '@/components/tracking/TrackingStatus'
 import { SummaryStatsCard } from '@/components/stats/StatsCard'
 import { MotivationalQuotes } from '@/components/quotes/MotivationalQuotes'
+import { FocusFlow } from '@/components/stats/FocusFlow'
 
 // Utils
 import { trackerAPI, statsAPI, foldersAPI, tasksAPI } from '@/lib/api'
@@ -34,9 +35,9 @@ export default function App() {
     const [renamingFolderId, setRenamingFolderId] = useState(null)
     const [renameFolderValue, setRenameFolderValue] = useState('')
 
-    // Task details state
     const [selectedTask, setSelectedTask] = useState(null)
     const [taskStats, setTaskStats] = useState(null)
+    const [showFocusFlow, setShowFocusFlow] = useState(false)
 
     // Theme state
     const [currentTheme, setCurrentTheme] = useState(() => {
@@ -252,7 +253,12 @@ export default function App() {
     if (loading) {
         return (
             <div className="min-h-screen flex flex-col">
-                <Header trackerStatus={null} currentTheme={currentTheme} onThemeChange={setCurrentTheme} />
+                <Header
+                    trackerStatus={null}
+                    currentTheme={currentTheme}
+                    onThemeChange={setCurrentTheme}
+                    onToggleFocusFlow={() => setShowFocusFlow(true)}
+                />
                 <main className="flex-1 max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
                     <SkeletonList count={4} />
                 </main>
@@ -262,7 +268,14 @@ export default function App() {
 
     return (
         <div className="min-h-screen flex flex-col">
-            <Header trackerStatus={trackerStatus} currentTheme={currentTheme} onThemeChange={setCurrentTheme} />
+            <Header
+                trackerStatus={trackerStatus}
+                currentTheme={currentTheme}
+                onThemeChange={setCurrentTheme}
+                onToggleFocusFlow={() => setShowFocusFlow(true)}
+            />
+
+            <FocusFlow isOpen={showFocusFlow} onClose={() => setShowFocusFlow(false)} />
 
             <main className="flex-1 max-w-5xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
                 <motion.div
