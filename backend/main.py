@@ -471,6 +471,29 @@ async def get_weekly_stats(start_date: Optional[str] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/stats/year")
+async def get_year_stats(year: Optional[int] = None):
+    """
+    Get yearly statistics
+    
+    Args:
+        year: Year (default: current year)
+    """
+    try:
+        if year is None:
+            year = datetime.now().year
+            
+        stats = db.get_year_stats(year)
+        
+        return {
+            "year": year,
+            "statistics": stats
+        }
+    except Exception as e:
+        logger.error(f"Error getting year stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/timeline")
 async def get_timeline(
     date: Optional[str] = None,
