@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { X, Sprout, ChevronLeft, ChevronRight, Flower2 } from 'lucide-react'
 import { statsAPI } from '@/lib/api'
 import { Button } from '@/components/ui'
-import { format, eachDayOfInterval, startOfYear, endOfYear, getDay, isSameDay, startOfWeek, endOfWeek } from 'date-fns'
+import { format, eachDayOfInterval, startOfYear, endOfYear, startOfWeek, endOfWeek } from 'date-fns'
 
 export function FocusGarden({ isOpen, onClose }) {
     const [year, setYear] = useState(new Date().getFullYear())
@@ -59,17 +59,24 @@ export function FocusGarden({ isOpen, onClose }) {
     }
 
     const days = useMemo(() => {
-        const start = startOfYear(new Date(year, 0, 1))
-        const end = endOfYear(new Date(year, 0, 1))
+        const baseDate = new Date(year, 0, 1)
+        const yearStart = startOfYear(baseDate)
+        const yearEnd = endOfYear(baseDate)
+        const calendarStart = startOfWeek(yearStart, { weekStartsOn: 0 })
+        const calendarEnd = endOfWeek(yearEnd, { weekStartsOn: 0 })
 
-        // Always start grid from the first Sunday of the year (or handled by offset)
-        return eachDayOfInterval({ start, end })
+        // Expand to full weeks so weekdays line up with the grid rows.
+        return eachDayOfInterval({ start: calendarStart, end: calendarEnd })
     }, [year])
 
     // Create a map for quick access
     const statsMap = useMemo(() => {
         const map = new Map()
-        stats.forEach(s => map.set(s.date, s))
+        stats.forEach(s => {
+            if (!s?.date) return
+            const key = typeof s.date === 'string' ? s.date.slice(0, 10) : null
+            if (key) map.set(key, s)
+        })
         return map
     }, [stats])
 
@@ -135,31 +142,35 @@ export function FocusGarden({ isOpen, onClose }) {
                                     <span className="flex-1">Dec</span>
                                 </div>
                                 <div className="flex gap-2">
-                                    <div className="flex flex-col gap-[3px] text-[10px] text-text-muted font-medium pt-2">
+                                    <div className="grid grid-rows-7 gap-[3px] text-[10px] text-text-muted font-medium pt-2">
+                                        <span className="text-transparent select-none">Sun</span>
                                         <span>Mon</span>
-                                        <span>&nbsp;</span>
+                                        <span className="text-transparent select-none">Tue</span>
                                         <span>Wed</span>
-                                        <span>&nbsp;</span>
+                                        <span className="text-transparent select-none">Thu</span>
                                         <span>Fri</span>
+                                        <span className="text-transparent select-none">Sat</span>
                                     </div>
                                     <div className="grid grid-flow-col grid-rows-7 gap-[3px]">
                                         {days.map(day => {
                                             const dateStr = format(day, 'yyyy-MM-dd')
-                                            const stat = statsMap.get(dateStr)
-                                            const duration = stat?.total_duration || 0
-                                            const level = getIntensityLevel(duration)
+                                            const inYear = day.getFullYear() === year
+                                            const stat = inYear ? statsMap.get(dateStr) : null
+                                            const duration = inYear ? stat?.total_duration || 0 : 0
+                                            const level = inYear ? getIntensityLevel(duration) : 0
+                                            const cellColor = inYear ? getFlowerColor(level) : 'bg-surface-2/40'
 
                                             return (
                                                 <motion.div
                                                     key={dateStr}
-                                                    whileHover={{ scale: 1.4, zIndex: 10 }}
-                                                    onHoverStart={() => setHoveredDay({ date: day, duration })}
+                                                    whileHover={inYear ? { scale: 1.4, zIndex: 10 } : undefined}
+                                                    onHoverStart={() => inYear && setHoveredDay({ date: day, duration })}
                                                     onHoverEnd={() => setHoveredDay(null)}
                                                     className={`
                                                         w-3.5 h-3.5 rounded-md flex items-center justify-center transition-colors duration-300
-                                                        ${getFlowerColor(level)}
+                                                        ${cellColor}
                                                     `}
-                                                    title={`${format(day, 'MMM d, yyyy')}: ${Math.round(duration / 60)} mins`}
+                                                    title={inYear ? `${format(day, 'MMM d, yyyy')}: ${Math.round(duration / 60)} mins` : ''}
                                                 >
                                                     {level > 2 && getFlowerIcon(level)}
                                                 </motion.div>
