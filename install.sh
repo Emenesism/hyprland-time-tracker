@@ -22,7 +22,8 @@ command -v npm >/dev/null 2>&1 || { echo "Error: npm is required but not install
 
 # Check if hyprctl is available
 if command -v hyprctl >/dev/null 2>&1; then
-    echo "✓ Hyprland detected"
+    echo "✓ Hyprland detected
+    "
 else
     echo "⚠ Warning: hyprctl not found. Make sure Hyprland is installed and running."
     echo "  Alternatively, install xdotool for X11 fallback: sudo pacman -S xdotool"

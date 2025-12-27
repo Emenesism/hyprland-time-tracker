@@ -23,7 +23,7 @@ APP_NAME = "Time Tracker"
 APP_VERSION = "1.0.0"
 
 # Frontend configuration
-FRONTEND_BUILD_PATH = BASE_DIR.parent / "frontend" / "dist"
+FRONTEND_BUILD_PATH = Path(os.getenv("FRONTEND_BUILD_PATH", BASE_DIR.parent / "frontend-cute" / "dist"))
 
 # Logging configuration
 LOG_LEVEL = "INFO"
