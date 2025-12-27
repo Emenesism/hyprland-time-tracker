@@ -56,10 +56,17 @@ The installation script will:
 1. ✓ Create Python virtual environment
 2. ✓ Install Python dependencies (FastAPI, Uvicorn, etc.)
 3. ✓ Install Node.js dependencies (React, Vite, Recharts)
-4. ✓ Build the React frontend for production
+4. ✓ Build the React frontend for production (defaults to `frontend-cute`)
 5. ✓ Install systemd user service
 6. ✓ Enable auto-start on boot
 7. ✓ Start the service immediately
+
+**Frontend selection:**
+- Default: `frontend-cute`
+- To use the classic frontend:
+  ```bash
+  FRONTEND_DIR=/home/em/Desktop/Tracker/frontend ./install.sh
+  ```
 
 **Expected Output:**
 ```
@@ -264,6 +271,12 @@ In development mode:
 - Changes to React files hot-reload in the browser
 - Frontend proxies API requests to backend
 
+To run the cozy frontend in dev mode:
+```bash
+cd frontend-cute
+npm run dev
+```
+
 ### Stop Development Servers
 Press `Ctrl+C` in the terminal running `dev.sh`
 
@@ -374,7 +387,7 @@ xdotool getactivewindow
 
 **Rebuild the frontend:**
 ```bash
-cd frontend
+cd frontend-cute
 npm install
 npm run build
 systemctl --user restart timetracker
@@ -420,8 +433,6 @@ rm -rf Tracker
 ## 📚 Additional Resources
 
 - **README.md** - Project overview and features
-- **QUICKSTART.md** - Quick reference guide
-- **ARCHITECTURE.md** - Technical architecture details
 - **API Docs** - http://localhost:8000/docs (when running)
 
 ## 💡 Tips for Best Results
