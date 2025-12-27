@@ -13,7 +13,20 @@ echo ""
 # Get the directory where the script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 BACKEND_DIR="$SCRIPT_DIR/backend"
-FRONTEND_DIR="$SCRIPT_DIR/frontend"
+FRONTEND_DIR_ENV="${FRONTEND_DIR:-}"
+if [ -n "$FRONTEND_DIR_ENV" ]; then
+    FRONTEND_DIR="$FRONTEND_DIR_ENV"
+elif [ -d "$SCRIPT_DIR/frontend-cute" ]; then
+    FRONTEND_DIR="$SCRIPT_DIR/frontend-cute"
+else
+    FRONTEND_DIR="$SCRIPT_DIR/frontend"
+fi
+FRONTEND_BUILD_PATH="$FRONTEND_DIR/dist"
+
+if [ ! -d "$FRONTEND_DIR" ]; then
+    echo "Error: frontend directory not found: $FRONTEND_DIR"
+    exit 1
+fi
 
 # Check for required commands
 echo "Checking for required dependencies..."
@@ -22,8 +35,7 @@ command -v npm >/dev/null 2>&1 || { echo "Error: npm is required but not install
 
 # Check if hyprctl is available
 if command -v hyprctl >/dev/null 2>&1; then
-    echo "✓ Hyprland detected
-    "
+    echo "✓ Hyprland detected"
 else
     echo "⚠ Warning: hyprctl not found. Make sure Hyprland is installed and running."
     echo "  Alternatively, install xdotool for X11 fallback: sudo pacman -S xdotool"
@@ -51,6 +63,7 @@ echo "✓ Backend setup complete"
 echo ""
 
 echo "Step 2: Setting up React frontend..."
+echo "Using frontend directory: $FRONTEND_DIR"
 cd "$FRONTEND_DIR"
 
 # Install Node.js dependencies
@@ -74,13 +87,25 @@ echo "Step 3: Installing systemd service..."
 # Create systemd user directory if it doesn't exist
 mkdir -p ~/.config/systemd/user
 
-# Copy service file and replace placeholder with actual home directory
-SERVICE_FILE="$SCRIPT_DIR/ls
-.service"
+# Copy service file, replace %h with actual home directory, and set frontend build path
+SERVICE_FILE="$SCRIPT_DIR/timetracker.service"
 TARGET_SERVICE="$HOME/.config/systemd/user/timetracker.service"
 
-# Replace %h with actual home directory
-sed "s|%h|$HOME|g" "$SERVICE_FILE" > "$TARGET_SERVICE"
+awk -v build_path="$FRONTEND_BUILD_PATH" -v home="$HOME" '
+    {
+        gsub("%h", home)
+    }
+    /^\[Install\]/ && !added {
+        print "Environment=\"FRONTEND_BUILD_PATH=" build_path "\""
+        added=1
+    }
+    { print }
+    END {
+        if (!added) {
+            print "Environment=\"FRONTEND_BUILD_PATH=" build_path "\""
+        }
+    }
+' "$SERVICE_FILE" > "$TARGET_SERVICE"
 
 # Reload systemd daemon
 systemctl --user daemon-reload
