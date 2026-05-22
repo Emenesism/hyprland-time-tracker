@@ -112,6 +112,7 @@ class StartTrackingRequest(BaseModel):
 
 class FolderResponse(BaseModel):
     id: int
+    project_id: Optional[int]
     name: str
     created_at: str
     updated_at: str
@@ -119,8 +120,27 @@ class FolderResponse(BaseModel):
     total_duration: int
 
 
+class ProjectResponse(BaseModel):
+    id: int
+    name: str
+    created_at: str
+    updated_at: str
+    folder_count: int
+    task_count: int
+    total_duration: int
+
+
+class CreateProjectRequest(BaseModel):
+    name: str
+
+
+class RenameProjectRequest(BaseModel):
+    name: str
+
+
 class CreateFolderRequest(BaseModel):
     name: str
+    project_id: Optional[int] = None
 
 
 class RenameFolderRequest(BaseModel):
@@ -260,11 +280,84 @@ async def move_task(task_id: int, request: MoveTaskRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/projects", response_model=List[ProjectResponse])
+async def list_projects():
+    """List all projects with summary stats"""
+    try:
+        projects = db.get_projects_with_stats()
+        return projects
+    except Exception as e:
+        logger.error(f"Error getting projects: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/projects", response_model=ProjectResponse)
+async def create_project(request: CreateProjectRequest):
+    """Create a new project"""
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Project name cannot be empty")
+
+    try:
+        project_id = db.create_project(name)
+        project = db.get_project(project_id)
+        project.update({"folder_count": 0, "task_count": 0, "total_duration": 0})
+        return project
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating project: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/projects/{project_id}", response_model=ProjectResponse)
+async def rename_project(project_id: int, request: RenameProjectRequest):
+    """Rename an existing project"""
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Project name cannot be empty")
+
+    try:
+        updated = db.rename_project(project_id, name)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Project not found")
+        projects = db.get_projects_with_stats()
+        project = next((p for p in projects if p["id"] == project_id), None)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        return project
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error renaming project: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: int):
+    """Delete a project and move folders to default project"""
+    try:
+        deleted = db.delete_project(project_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Project not found")
+        projects = db.get_projects_with_stats()
+        return {"status": "deleted", "project_id": project_id, "projects": projects}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting project: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/folders", response_model=List[FolderResponse])
-async def list_folders():
+async def list_folders(project_id: Optional[int] = None):
     """List all folders with summary stats"""
     try:
-        folders = db.get_folders_with_stats()
+        folders = db.get_folders_with_stats(project_id)
         return folders
     except Exception as e:
         logger.error(f"Error getting folders: {e}")
@@ -279,12 +372,9 @@ async def create_folder(request: CreateFolderRequest):
         raise HTTPException(status_code=400, detail="Folder name cannot be empty")
 
     try:
-        folder_id = db.create_folder(name)
+        folder_id = db.create_folder(name, request.project_id)
         folder = db.get_folder(folder_id)
-        folder.update({
-            "task_count": 0,
-            "total_duration": 0
-        })
+        folder.update({"task_count": 0, "total_duration": 0})
         return folder
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

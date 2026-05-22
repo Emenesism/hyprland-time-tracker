@@ -42,11 +42,28 @@ export const statsAPI = {
 }
 
 // Folders API
-export const foldersAPI = {
-    list: () => fetchJSON(`${API_BASE}/folders`),
-    create: (name) => fetchJSON(`${API_BASE}/folders`, {
+export const projectsAPI = {
+    list: () => fetchJSON(`${API_BASE}/projects`),
+    create: (name) => fetchJSON(`${API_BASE}/projects`, {
         method: 'POST',
         body: JSON.stringify({ name }),
+    }),
+    rename: (id, name) => fetchJSON(`${API_BASE}/projects/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+    }),
+    delete: (id) => fetchJSON(`${API_BASE}/projects/${id}`, { method: 'DELETE' }),
+}
+
+// Folders API
+export const foldersAPI = {
+    list: (projectId) => {
+        const query = projectId ? `?project_id=${projectId}` : ''
+        return fetchJSON(`${API_BASE}/folders${query}`)
+    },
+    create: (name, projectId) => fetchJSON(`${API_BASE}/folders`, {
+        method: 'POST',
+        body: JSON.stringify({ name, project_id: projectId }),
     }),
     rename: (id, name) => fetchJSON(`${API_BASE}/folders/${id}`, {
         method: 'PATCH',

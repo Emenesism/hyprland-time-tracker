@@ -69,11 +69,13 @@ def categorize_app(app_name: str) -> str:
 
 
 class Database:
+    DEFAULT_PROJECT_NAME = "Cozy Projects"
     DEFAULT_FOLDER_NAME = "Unsorted"
 
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self.init_db()
+        self.default_project_id = self.ensure_project_support()
         self.default_folder_id = self.ensure_folder_support()
 
     def get_connection(self):
@@ -87,13 +89,25 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        # Folders table - groups tasks/projects
+        # Projects table - top-level groups for folders
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS folders (
+            CREATE TABLE IF NOT EXISTS projects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Folders table - groups tasks inside projects
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS folders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER,
+                name TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
             )
         """)
 
@@ -160,10 +174,56 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_tasks_folder
             ON tasks(folder_id)
         """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_folders_project
+            ON folders(project_id)
+        """)
 
         conn.commit()
         conn.close()
         logger.info(f"Database initialized at {self.db_path}")
+
+    def ensure_project_support(self) -> int:
+        """Ensure project table, default project, and folder relationship exist."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("SELECT id FROM projects WHERE name = ?", (self.DEFAULT_PROJECT_NAME,))
+        row = cursor.fetchone()
+        if row:
+            default_project_id = row['id']
+        else:
+            cursor.execute("INSERT INTO projects (name) VALUES (?)", (self.DEFAULT_PROJECT_NAME,))
+            default_project_id = cursor.lastrowid
+
+        cursor.execute("PRAGMA table_info(folders)")
+        folder_columns = {row['name'] for row in cursor.fetchall()}
+        if 'project_id' not in folder_columns:
+            cursor.execute("ALTER TABLE folders ADD COLUMN project_id INTEGER")
+
+        cursor.execute("""
+            UPDATE folders
+            SET project_id = ?
+            WHERE project_id IS NULL
+        """, (default_project_id,))
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_folders_project
+            ON folders(project_id)
+        """)
+
+        conn.commit()
+        conn.close()
+        return default_project_id
 
     def ensure_folder_support(self) -> int:
         """Ensure folder table, default folder and column relationships exist"""
@@ -174,9 +234,11 @@ class Database:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS folders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER,
                 name TEXT NOT NULL UNIQUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
             )
         """)
 
@@ -186,14 +248,28 @@ class Database:
         if 'folder_id' not in columns:
             cursor.execute("ALTER TABLE tasks ADD COLUMN folder_id INTEGER")
 
+        cursor.execute("PRAGMA table_info(folders)")
+        folder_columns = {row['name'] for row in cursor.fetchall()}
+        if 'project_id' not in folder_columns:
+            cursor.execute("ALTER TABLE folders ADD COLUMN project_id INTEGER")
+
         # Create default folder if missing
         cursor.execute("SELECT id FROM folders WHERE name = ?", (self.DEFAULT_FOLDER_NAME,))
         row = cursor.fetchone()
         if row:
             default_folder_id = row['id']
         else:
-            cursor.execute("INSERT INTO folders (name) VALUES (?)", (self.DEFAULT_FOLDER_NAME,))
+            cursor.execute(
+                "INSERT INTO folders (name, project_id) VALUES (?, ?)",
+                (self.DEFAULT_FOLDER_NAME, self.default_project_id),
+            )
             default_folder_id = cursor.lastrowid
+
+        cursor.execute("""
+            UPDATE folders
+            SET project_id = ?
+            WHERE project_id IS NULL
+        """, (self.default_project_id,))
 
         # Assign existing tasks without a folder to the default
         cursor.execute("""
@@ -239,16 +315,163 @@ class Database:
         logger.info(f"Created task {task_id}: {title}")
         return task_id
 
-    def get_folders(self) -> List[Dict]:
-        """Get all folders"""
+    def get_projects_with_stats(self) -> List[Dict]:
+        """Return projects with folder/task/time stats."""
         conn = self.get_connection()
         cursor = conn.cursor()
 
         cursor.execute("""
             SELECT id, name, created_at, updated_at
-            FROM folders
-            ORDER BY name COLLATE NOCASE
+            FROM projects
         """)
+        projects = [dict(row) for row in cursor.fetchall()]
+
+        cursor.execute("""
+            SELECT project_id, COUNT(*) as folder_count
+            FROM folders
+            GROUP BY project_id
+        """)
+        folder_counts = {row['project_id']: row['folder_count'] for row in cursor.fetchall() if row['project_id'] is not None}
+
+        cursor.execute("""
+            SELECT f.project_id as project_id, COUNT(t.id) as task_count
+            FROM folders f
+            LEFT JOIN tasks t ON t.folder_id = f.id
+            GROUP BY f.project_id
+        """)
+        task_counts = {row['project_id']: row['task_count'] for row in cursor.fetchall() if row['project_id'] is not None}
+
+        cursor.execute("""
+            SELECT f.project_id as project_id, SUM(a.duration) as total_duration
+            FROM folders f
+            JOIN tasks t ON t.folder_id = f.id
+            JOIN activities a ON a.task_id = t.id
+            WHERE a.duration IS NOT NULL
+            GROUP BY f.project_id
+        """)
+        durations = {row['project_id']: row['total_duration'] for row in cursor.fetchall() if row['project_id'] is not None}
+
+        conn.close()
+
+        for project in projects:
+            pid = project['id']
+            project['folder_count'] = folder_counts.get(pid, 0)
+            project['task_count'] = task_counts.get(pid, 0)
+            project['total_duration'] = int(durations.get(pid, 0) or 0)
+
+        projects.sort(key=lambda p: (p['id'] != self.default_project_id, p['name'].lower()))
+        return projects
+
+    def get_project(self, project_id: int) -> Optional[Dict]:
+        """Retrieve a single project."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, name, created_at, updated_at
+            FROM projects
+            WHERE id = ?
+        """, (project_id,))
+
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def create_project(self, name: str) -> int:
+        """Create a new project."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        now = datetime.now()
+
+        try:
+            cursor.execute("""
+                INSERT INTO projects (name, created_at, updated_at)
+                VALUES (?, ?, ?)
+            """, (name, now, now))
+        except sqlite3.IntegrityError as exc:
+            conn.rollback()
+            conn.close()
+            raise ValueError("Project name must be unique") from exc
+
+        project_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        logger.info(f"Created project {project_id}: {name}")
+        return project_id
+
+    def rename_project(self, project_id: int, name: str) -> bool:
+        """Rename an existing project."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        now = datetime.now()
+
+        try:
+            cursor.execute("""
+                UPDATE projects
+                SET name = ?, updated_at = ?
+                WHERE id = ?
+            """, (name, now, project_id))
+        except sqlite3.IntegrityError as exc:
+            conn.rollback()
+            conn.close()
+            raise ValueError("Project name must be unique") from exc
+
+        updated = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return updated
+
+    def delete_project(self, project_id: int) -> bool:
+        """Delete a project and move its folders to the default project."""
+        if project_id == self.default_project_id:
+            raise ValueError("Cannot delete the default project")
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT id FROM projects WHERE id = ?", (project_id,))
+        if not cursor.fetchone():
+            conn.close()
+            return False
+
+        now = datetime.now()
+        cursor.execute("""
+            UPDATE folders
+            SET project_id = ?, updated_at = ?
+            WHERE project_id = ?
+        """, (self.default_project_id, now, project_id))
+
+        cursor.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        deleted = cursor.rowcount > 0
+        if deleted:
+            cursor.execute("""
+                UPDATE projects
+                SET updated_at = ?
+                WHERE id = ?
+            """, (now, self.default_project_id))
+
+        conn.commit()
+        conn.close()
+        return deleted
+
+    def get_folders(self, project_id: Optional[int] = None) -> List[Dict]:
+        """Get all folders, optionally inside a project."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        if project_id is not None:
+            cursor.execute("""
+                SELECT id, project_id, name, created_at, updated_at
+                FROM folders
+                WHERE project_id = ?
+                ORDER BY name COLLATE NOCASE
+            """, (project_id,))
+        else:
+            cursor.execute("""
+                SELECT id, project_id, name, created_at, updated_at
+                FROM folders
+                ORDER BY name COLLATE NOCASE
+            """)
 
         rows = cursor.fetchall()
         conn.close()
@@ -261,7 +484,7 @@ class Database:
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT id, name, created_at, updated_at
+            SELECT id, project_id, name, created_at, updated_at
             FROM folders
             WHERE id = ?
         """, (folder_id,))
@@ -270,23 +493,35 @@ class Database:
         conn.close()
         return dict(row) if row else None
 
-    def create_folder(self, name: str) -> int:
+    def create_folder(self, name: str, project_id: Optional[int] = None) -> int:
         """Create a new folder"""
         conn = self.get_connection()
         cursor = conn.cursor()
         now = datetime.now()
+        target_project_id = project_id or self.default_project_id
+
+        cursor.execute("SELECT id FROM projects WHERE id = ?", (target_project_id,))
+        if not cursor.fetchone():
+            conn.close()
+            raise ValueError("Project not found")
 
         try:
             cursor.execute("""
-                INSERT INTO folders (name, created_at, updated_at)
-                VALUES (?, ?, ?)
-            """, (name, now, now))
+                INSERT INTO folders (name, project_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+            """, (name, target_project_id, now, now))
         except sqlite3.IntegrityError as exc:
             conn.rollback()
             conn.close()
             raise ValueError("Folder name must be unique") from exc
 
         folder_id = cursor.lastrowid
+        cursor.execute("""
+            UPDATE projects
+            SET updated_at = ?
+            WHERE id = ?
+        """, (now, target_project_id))
+
         conn.commit()
         conn.close()
         logger.info(f"Created folder {folder_id}: {name}")
@@ -389,15 +624,22 @@ class Database:
         conn.close()
         return updated
 
-    def get_folders_with_stats(self) -> List[Dict]:
+    def get_folders_with_stats(self, project_id: Optional[int] = None) -> List[Dict]:
         """Return folders with aggregated task/time stats"""
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
-            SELECT id, name, created_at, updated_at
-            FROM folders
-        """)
+        if project_id is not None:
+            cursor.execute("""
+                SELECT id, project_id, name, created_at, updated_at
+                FROM folders
+                WHERE project_id = ?
+            """, (project_id,))
+        else:
+            cursor.execute("""
+                SELECT id, project_id, name, created_at, updated_at
+                FROM folders
+            """)
         folders = [dict(row) for row in cursor.fetchall()]
 
         cursor.execute("""
