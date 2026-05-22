@@ -32,6 +32,7 @@ export const trackerAPI = {
 // Stats API
 export const statsAPI = {
     getSummary: () => fetchJSON(`${API_BASE}/stats/summary`),
+    getCategories: () => fetchJSON(`${API_BASE}/stats/categories`),
     getTimeline: (date) => fetchJSON(`${API_BASE}/timeline?date=${date}`),
 
     getYearStats: (year) => {

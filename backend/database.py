@@ -47,6 +47,27 @@ def normalize_app_name(app_name: str, window_title: str = None) -> str:
     return app_name
 
 
+def categorize_app(app_name: str) -> str:
+    """Group application names into readable productivity categories."""
+    app = normalize_app_name(app_name).lower()
+
+    category_rules = [
+        ("Coding", ("code", "pycharm", "intellij", "webstorm", "vim", "nvim", "emacs", "zed", "sublime")),
+        ("Browser", ("chrome", "chromium", "firefox", "brave", "vivaldi", "edge", "browser")),
+        ("Terminal", ("terminal", "kitty", "alacritty", "konsole", "wezterm", "foot", "gnome-terminal")),
+        ("Design", ("figma", "gimp", "inkscape", "krita", "blender", "photoshop", "illustrator")),
+        ("Chat", ("discord", "slack", "telegram", "whatsapp", "signal", "teams", "element")),
+        ("Docs", ("libreoffice", "writer", "obsidian", "notion", "logseq", "zathura", "evince", "okular")),
+        ("Media", ("spotify", "vlc", "mpv", "youtube", "music", "video")),
+    ]
+
+    for category, needles in category_rules:
+        if any(needle in app for needle in needles):
+            return category
+
+    return "Other"
+
+
 class Database:
     DEFAULT_FOLDER_NAME = "Unsorted"
 
@@ -1018,6 +1039,51 @@ class Database:
             'week_time': int(week_time),
             'last_30_days_time': int(last_30_days_time)
         }
+
+    def get_category_stats(self) -> List[Dict]:
+        """Get tracked time grouped into app categories."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT app_name, SUM(duration) as total_duration, COUNT(*) as session_count
+            FROM activities
+            WHERE duration IS NOT NULL
+            GROUP BY app_name
+        """)
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        categories: Dict[str, Dict] = {}
+        for row in rows:
+            app_name = normalize_app_name(row['app_name'])
+            category = categorize_app(app_name)
+            duration = int(row['total_duration'] or 0)
+            session_count = int(row['session_count'] or 0)
+
+            if category not in categories:
+                categories[category] = {
+                    'category': category,
+                    'total_duration': 0,
+                    'session_count': 0,
+                    'apps': []
+                }
+
+            categories[category]['total_duration'] += duration
+            categories[category]['session_count'] += session_count
+            categories[category]['apps'].append({
+                'app_name': app_name,
+                'total_duration': duration,
+                'session_count': session_count
+            })
+
+        results = list(categories.values())
+        for category in results:
+            category['apps'].sort(key=lambda app: app['total_duration'], reverse=True)
+
+        results.sort(key=lambda category: category['total_duration'], reverse=True)
+        return results
 
     def cleanup_old_data(self, days: int = 90):
         """Remove data older than specified days"""

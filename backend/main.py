@@ -568,6 +568,17 @@ async def get_summary_stats():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/stats/categories")
+async def get_category_stats():
+    """Get tracked time grouped by app category"""
+    try:
+        categories = db.get_category_stats()
+        return {"categories": categories}
+    except Exception as e:
+        logger.error(f"Error getting category stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/export/data")
 async def export_data(
     start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),

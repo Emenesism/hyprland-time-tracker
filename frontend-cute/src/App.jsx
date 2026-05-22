@@ -11,6 +11,7 @@ import { TaskCard } from '@/components/tasks/TaskCard'
 import { TaskDetailsPanel } from '@/components/tasks/TaskDetailsPanel'
 import { TrackingStatus } from '@/components/tracking/TrackingStatus'
 import { SummaryStatsCard } from '@/components/stats/StatsCard'
+import { AppCategoriesCard } from '@/components/stats/AppCategoriesCard'
 import { MotivationalQuotes } from '@/components/quotes/MotivationalQuotes'
 import { FocusFlow } from '@/components/stats/FocusFlow'
 import { FocusGarden } from '@/components/stats/FocusGarden'
@@ -24,6 +25,7 @@ export default function App() {
     const [tasks, setTasks] = useState([])
     const [selectedFolderId, setSelectedFolderId] = useState(null)
     const [summaryStats, setSummaryStats] = useState(null)
+    const [appCategories, setAppCategories] = useState([])
     const [trackerStatus, setTrackerStatus] = useState(null)
     const [loading, setLoading] = useState(true)
 
@@ -88,6 +90,14 @@ export default function App() {
             } catch (error) {
                 console.log('Stats unavailable:', error.message)
                 setSummaryStats(null)
+            }
+
+            try {
+                const categoryData = await statsAPI.getCategories()
+                setAppCategories(categoryData.categories || [])
+            } catch (error) {
+                console.log('Category stats unavailable:', error.message)
+                setAppCategories([])
             }
 
             // Folders should always work
@@ -291,6 +301,8 @@ export default function App() {
                 >
                     {/* Stats Card */}
                     <SummaryStatsCard summaryStats={summaryStats} selectedFolder={selectedFolder} />
+
+                    {!inFolderView && <AppCategoriesCard categories={appCategories} />}
 
                     {/* Motivational Quotes - only on home */}
                     {!inFolderView && <MotivationalQuotes />}
