@@ -111,6 +111,11 @@ class Database:
             )
         """)
 
+        cursor.execute("PRAGMA table_info(folders)")
+        folder_columns = {row['name'] for row in cursor.fetchall()}
+        if 'project_id' not in folder_columns:
+            cursor.execute("ALTER TABLE folders ADD COLUMN project_id INTEGER")
+
         # Tasks table - stores user-defined tasks/projects
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS tasks (

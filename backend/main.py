@@ -3,10 +3,12 @@ FastAPI backend for the Time Tracker application
 Provides REST API for tracking data and serves the frontend
 """
 import logging
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, List
+from xml.sax.saxutils import escape
+from typing import List, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
@@ -51,6 +53,85 @@ db = Database(config.DB_PATH)
 
 # Tracker will be initialized on startup (may require compositor/runtime to be available)
 tracker = None
+
+ARABIC_TEXT_RE = re.compile(
+    r"[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]"
+)
+
+
+def resolve_pdf_font_names() -> Tuple[str, str]:
+    """Register a Unicode-capable font for PDF exports and return (regular, bold)."""
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    font_candidates = [
+        (
+            "TrackerNotoNaskhArabic",
+            "/usr/share/fonts/noto/NotoNaskhArabic-Regular.ttf",
+            "/usr/share/fonts/noto/NotoNaskhArabic-Bold.ttf",
+        ),
+        (
+            "TrackerNotoSansArabic",
+            "/usr/share/fonts/noto/NotoSansArabic-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSansArabic-Bold.ttf",
+        ),
+        (
+            "TrackerDejaVuSans",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+        ),
+        (
+            "TrackerDejaVuSans",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ),
+    ]
+
+    registered_fonts = set(pdfmetrics.getRegisteredFontNames())
+    for base_name, regular_path, bold_path in font_candidates:
+        regular_font = Path(regular_path)
+        bold_font = Path(bold_path)
+        if not regular_font.exists():
+            continue
+
+        regular_alias = f"{base_name}-Regular"
+        bold_alias = f"{base_name}-Bold"
+        if regular_alias not in registered_fonts:
+            pdfmetrics.registerFont(TTFont(regular_alias, str(regular_font)))
+            registered_fonts.add(regular_alias)
+
+        # If bold file does not exist, reuse regular to keep style rendering stable.
+        if not bold_font.exists():
+            bold_font = regular_font
+        if bold_alias not in registered_fonts:
+            pdfmetrics.registerFont(TTFont(bold_alias, str(bold_font)))
+            registered_fonts.add(bold_alias)
+
+        return regular_alias, bold_alias
+
+    return "Helvetica", "Helvetica-Bold"
+
+
+def to_pdf_paragraph_text(value: Optional[str]) -> str:
+    """Escape text for ReportLab Paragraph and preserve user-entered newlines."""
+    text = (value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return ""
+
+    # Optional Arabic/Persian shaping if dependencies are available.
+    if ARABIC_TEXT_RE.search(text):
+        try:
+            import arabic_reshaper
+            from bidi.algorithm import get_display
+
+            text = "\n".join(
+                get_display(arabic_reshaper.reshape(line)) if line else line
+                for line in text.split("\n")
+            )
+        except Exception:
+            pass
+
+    return escape(text).replace("\n", "<br/>")
 
 
 # Pydantic models for API responses
@@ -1037,401 +1118,308 @@ async def export_pdf(
 
 @app.get("/api/export/folder/{folder_id}/pdf")
 async def export_folder_pdf(folder_id: int):
-    """Generate and download PDF report for all tasks in a folder"""
+    """Generate a polished PDF report for all tracked time in a folder."""
     try:
         folder = db.get_folder(folder_id)
         if not folder:
             raise HTTPException(status_code=404, detail="Folder not found")
 
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib import colors
-        from reportlab.lib.units import inch, cm
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Frame, PageTemplate
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
         import io
+        from collections import defaultdict
+
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import inch
+        from reportlab.platypus import (
+            KeepTogether,
+            PageBreak,
+            Paragraph,
+            SimpleDocTemplate,
+            Spacer,
+            Table,
+            TableStyle,
+        )
 
         # Get data for folder (all dates)
         data = db.get_export_data_for_folder(folder_id)
-        
-        # Calculate summary stats for the folder
+
+        regular_font_name, bold_font_name = resolve_pdf_font_names()
+
         total_seconds = 0
-        app_stats = {}
-        task_stats = {}
-        
+        app_stats = defaultdict(int)
+        task_stats = defaultdict(int)
+        session_count = 0
+
         for day_data in data:
-            for task in day_data.get('tasks', []):
-                t_seconds = task['total_time']
+            for task in day_data.get("tasks", []):
+                t_seconds = int(task.get("total_time") or 0)
                 total_seconds += t_seconds
-                
-                # Task Stats (within this folder)
-                t_title = task['task_title']
-                if t_title not in task_stats:
-                    task_stats[t_title] = 0
-                task_stats[t_title] += t_seconds
-                
-                # App Stats
-                for app in task.get('apps', []):
-                    a_name = app['app_name']
-                    a_seconds = app['duration']
-                    if a_name not in app_stats:
-                        app_stats[a_name] = 0
-                    app_stats[a_name] += a_seconds
+                task_stats[task.get("task_title") or f"Task {task.get('task_id')}"] += t_seconds
+                for app in task.get("apps", []):
+                    app_stats[app.get("app_name") or "Unknown"] += int(app.get("duration") or 0)
+                    session_count += int(app.get("session_count") or 0)
 
-        # Sort stats
-        sorted_apps = sorted(app_stats.items(), key=lambda x: x[1], reverse=True)[:5]
-        sorted_tasks = sorted(task_stats.items(), key=lambda x: x[1], reverse=True)[:5]
+        sorted_apps = sorted(app_stats.items(), key=lambda x: x[1], reverse=True)[:6]
+        sorted_tasks = sorted(task_stats.items(), key=lambda x: x[1], reverse=True)[:6]
 
-        # Helper function to format duration
         def format_duration(seconds):
-            if not seconds:
+            seconds = int(seconds or 0)
+            if seconds <= 0:
                 return "0m"
             hours = seconds // 3600
             minutes = (seconds % 3600) // 60
-            if hours > 0:
-                return f"{hours}h {minutes}m"
-            return f"{minutes}m"
-            
-        def format_duration_detailed(seconds):
-            if not seconds:
-                return "0m"
-            hours = seconds // 3600
-            minutes = (seconds % 3600) // 60
-            if hours > 0:
+            if hours:
                 return f"{hours}h {minutes}m"
             return f"{minutes}m"
 
-        # Create PDF in memory
+        def clean_text(value):
+            return to_pdf_paragraph_text(str(value or "")) or "-"
+
+        def nice_date(date_str):
+            try:
+                dt = datetime.strptime(date_str, "%Y-%m-%d")
+                return dt.strftime("%A, %b %d, %Y")
+            except Exception:
+                return date_str
+
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
-            buffer, 
-            pagesize=A4, 
-            topMargin=0.8*inch, 
-            bottomMargin=0.8*inch,
-            leftMargin=0.8*inch,
-            rightMargin=0.8*inch
+            buffer,
+            pagesize=A4,
+            topMargin=0.55 * inch,
+            bottomMargin=0.55 * inch,
+            leftMargin=0.62 * inch,
+            rightMargin=0.62 * inch,
         )
-        
-        # Define styles (Same as export_pdf)
+
         styles = getSampleStyleSheet()
-        
-        # Color Palette
-        PRIMARY_COLOR = colors.HexColor('#6366f1') # Indigo 500
-        SECONDARY_COLOR = colors.HexColor('#8b5cf6') # Violet 500
-        ACCENT_COLOR = colors.HexColor('#a5b4fc') # Indigo 300
-        BG_COLOR = colors.HexColor('#f9fafb') # Gray 50
-        TEXT_COLOR = colors.HexColor('#1f2937') # Gray 800
-        LIGHT_TEXT_COLOR = colors.HexColor('#6b7280') # Gray 500
-        
-        # Custom Styles
+        ink = colors.HexColor("#31283b")
+        muted = colors.HexColor("#7c7289")
+        rose = colors.HexColor("#f472b6")
+        coral = colors.HexColor("#fb7185")
+        lavender = colors.HexColor("#a78bfa")
+        mint = colors.HexColor("#34d399")
+        cream = colors.HexColor("#fff7fb")
+        soft_purple = colors.HexColor("#f3ecff")
+        soft_pink = colors.HexColor("#fdf2f8")
+        line = colors.HexColor("#ead7e8")
+
         style_title = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=28,
-            textColor=PRIMARY_COLOR,
-            spaceAfter=10,
+            "PrettyReportTitle",
+            parent=styles["Heading1"],
+            fontName=bold_font_name,
+            fontSize=30,
+            leading=34,
+            textColor=ink,
             alignment=TA_CENTER,
-            fontName='Helvetica-Bold'
+            spaceAfter=8,
         )
-        
         style_subtitle = ParagraphStyle(
-            'CustomSubtitle',
-            parent=styles['Normal'],
+            "PrettyReportSubtitle",
+            parent=styles["Normal"],
+            fontName=regular_font_name,
             fontSize=12,
-            textColor=LIGHT_TEXT_COLOR,
-            spaceAfter=40,
-            alignment=TA_CENTER
-        )
-        
-        style_section_header = ParagraphStyle(
-            'SectionHeader',
-            parent=styles['Heading2'],
-            fontSize=16,
-            textColor=SECONDARY_COLOR,
-            spaceBefore=20,
-            spaceAfter=10,
-            fontName='Helvetica-Bold'
-        )
-        
-        style_card_label = ParagraphStyle(
-            'CardLabel',
-            parent=styles['Normal'],
-            fontSize=10,
-            textColor=LIGHT_TEXT_COLOR,
-            alignment=TA_CENTER
-        )
-        
-        style_card_value = ParagraphStyle(
-            'CardValue',
-            parent=styles['Heading2'],
-            fontSize=20,
-            textColor=TEXT_COLOR,
+            leading=16,
+            textColor=muted,
             alignment=TA_CENTER,
-            fontName='Helvetica-Bold'
+            spaceAfter=18,
         )
+        style_section_header = ParagraphStyle(
+            "PrettySectionHeader",
+            parent=styles["Heading2"],
+            fontName=bold_font_name,
+            fontSize=15,
+            leading=18,
+            textColor=ink,
+            spaceBefore=14,
+            spaceAfter=8,
+        )
+        style_label = ParagraphStyle(
+            "PrettyLabel",
+            parent=styles["Normal"],
+            fontName=bold_font_name,
+            fontSize=8,
+            leading=10,
+            textColor=muted,
+            alignment=TA_CENTER,
+        )
+        style_value = ParagraphStyle(
+            "PrettyValue",
+            parent=styles["Normal"],
+            fontName=bold_font_name,
+            fontSize=16,
+            leading=20,
+            textColor=ink,
+            alignment=TA_CENTER,
+        )
+        style_table_text = ParagraphStyle(
+            "PrettyTableText",
+            parent=styles["Normal"],
+            fontName=regular_font_name,
+            fontSize=9,
+            leading=12,
+            textColor=ink,
+        )
+        style_table_muted = ParagraphStyle(
+            "PrettyTableMuted",
+            parent=style_table_text,
+            textColor=muted,
+        )
+
+        def stat_card(label, value, accent_color):
+            table = Table(
+                [[Paragraph(label, style_label)], [Paragraph(value, style_value)]],
+                colWidths=[1.85 * inch],
+            )
+            table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+                ("BOX", (0, 0), (-1, -1), 0.8, accent_color),
+                ("TOPPADDING", (0, 0), (-1, -1), 9),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+            ]))
+            return table
+
+        def ranking_table(title, rows, color):
+            body = [[Paragraph(title, style_label), Paragraph("Time", style_label)]]
+            if rows:
+                for name, duration in rows:
+                    body.append([
+                        Paragraph(clean_text(name), style_table_text),
+                        Paragraph(format_duration(duration), style_table_text),
+                    ])
+            else:
+                body.append([Paragraph("No data yet", style_table_muted), Paragraph("0m", style_table_muted)])
+
+            table = Table(body, colWidths=[3.6 * inch, 1.2 * inch])
+            table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), color),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, cream]),
+                ("BOX", (0, 0), (-1, -1), 0.5, line),
+                ("INNERGRID", (0, 0), (-1, -1), 0.25, line),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("LEFTPADDING", (0, 0), (-1, -1), 9),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+            ]))
+            return table
 
         elements = []
-        
-        # --- TITLE PAGE / SUMMARY ---
-        
-        elements.append(Paragraph(f"Folder Report: {folder['name']}", style_title))
-        elements.append(Paragraph("Time Tracking Summary", style_subtitle))
-        
-        # Total Time Card
-        elements.append(Paragraph("TOTAL TIME LOGGED", style_card_label))
-        elements.append(Paragraph(format_duration(total_seconds), style_card_value))
-        elements.append(Spacer(1, 0.5*inch))
-        
-        # Stats
-        elements.append(Paragraph("Top Applications in Folder", style_section_header))
-        
-        if sorted_apps:
-            table_data = [['Application', 'Duration']]
-            for app, dur in sorted_apps:
-                table_data.append([app, format_duration(dur)])
-            
-            t = Table(table_data, colWidths=[4*inch, 2*inch])
-            t.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), PRIMARY_COLOR),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-                ('TOPPADDING', (0, 0), (-1, 0), 10),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, BG_COLOR]),
-            ]))
-            elements.append(t)
-        else:
-            elements.append(Paragraph("No application data available.", styles['Normal']))
-            
-        elements.append(Spacer(1, 0.3*inch))
-        elements.append(Paragraph("Top Tasks in Folder", style_section_header))
-        
-        if sorted_tasks:
-            table_data = [['Task', 'Duration']]
-            for task, dur in sorted_tasks:
-                table_data.append([task, format_duration(dur)])
-            
-            t = Table(table_data, colWidths=[4*inch, 2*inch])
-            t.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), SECONDARY_COLOR),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-                ('TOPPADDING', (0, 0), (-1, 0), 10),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, BG_COLOR]),
-            ]))
-            elements.append(t)
-        else:
-            elements.append(Paragraph("No task data available.", styles['Normal']))
-            
+        elements.append(Spacer(1, 0.15 * inch))
+        elements.append(Paragraph(clean_text(folder["name"]), style_title))
+        elements.append(Paragraph("Folder time report", style_subtitle))
+        elements.append(Table(
+            [[
+                stat_card("TOTAL FOCUS", format_duration(total_seconds), rose),
+                stat_card("TASKS", str(len(task_stats)), lavender),
+                stat_card("SESSIONS", str(session_count), mint),
+            ]],
+            colWidths=[2.0 * inch, 2.0 * inch, 2.0 * inch],
+        ))
+        elements.append(Spacer(1, 0.35 * inch))
+        elements.append(ranking_table("Top applications", sorted_apps, rose))
+        elements.append(Spacer(1, 0.18 * inch))
+        elements.append(ranking_table("Top tasks", sorted_tasks, lavender))
         elements.append(PageBreak())
-        
-         # --- DETAILED REPORT ---
-        
-        style_day_header = ParagraphStyle(
-            'DayHeader',
-            parent=styles['Heading2'],
-            fontSize=14,
-            textColor=TEXT_COLOR,
-            spaceBefore=15,
-            spaceAfter=10,
-            fontName='Helvetica-Bold',
-            borderPadding=5,
-            borderColor=colors.lightgrey,
-            borderWidth=0,
-            backColor=colors.HexColor('#f3f4f6')
-        )
 
-        elements.append(Paragraph("Detailed Daily Activity", style_section_header))
-        
+        elements.append(Paragraph("Daily activity", style_title))
+        elements.append(Paragraph("A clean breakdown by day, task, and app.", style_subtitle))
+
         if not data:
-             elements.append(Paragraph("No activities found.", styles['Normal']))
+            elements.append(Paragraph("No tracked activity yet.", style_table_muted))
         else:
-             for i, day_data in enumerate(data):
-                date_str = day_data['date']
-                tasks = day_data['tasks']
-                
-                try:
-                    dt = datetime.strptime(date_str, "%Y-%m-%d")
-                    nice_date = dt.strftime("%A, %b %d")
-                except:
-                    nice_date = date_str
-                
-                elements.append(Paragraph(f"📅 {nice_date}", style_day_header))
-                
-                if not tasks:
-                    elements.append(Paragraph("No recorded activity.", styles['Italic']))
-                    continue
-                    
-                table_data = [['Task / Application', 'Time', 'Sessions']]
-                
-                for task_data in tasks:
-                    # Task Row
-                    task_title = task_data['task_title']
-                    task_total = format_duration_detailed(task_data['total_time'])
-                    
-                    # Add task as a "Section" row in the table
-                    table_data.append([
-                        Paragraph(f"<b>{task_title}</b>", styles['Normal']),
-                        Paragraph(f"<b>{task_total}</b>", styles['Normal']),
-                        ""
-                    ])
-                    
-                    # App Rows
-                    for app in task_data.get('apps', []):
-                        app_name = app['app_name']
-                        app_dur = format_duration_detailed(app['duration'])
-                        sess_count = str(app['session_count'])
-                        
-                        table_data.append([
-                            Paragraph(f"<font color='#6b7280'>&nbsp;&nbsp;&nbsp;• {app_name}</font>", styles['Normal']),
-                            Paragraph(f"<font color='#6b7280'>{app_dur}</font>", styles['Normal']),
-                            Paragraph(f"<font color='#6b7280'>{sess_count}</font>", styles['Normal'])
-                        ])
-                
-                # Render the table for this day
-                t = Table(table_data, colWidths=[3.5*inch, 1.5*inch, 1*inch])
-                t.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), LIGHT_TEXT_COLOR),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                    ('ALIGN', (0, 0), (-1, 0), 'LEFT'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 9),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-                    ('TOPPADDING', (0, 0), (-1, 0), 6),
-                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                    ('ALIGN', (1, 1), (-1, -1), 'LEFT'),
-                    ('ALIGN', (2, 1), (-1, -1), 'CENTER'),
-                    ('LINEBELOW', (0, 0), (-1, -1), 0.25, colors.HexColor('#e5e7eb')),
-                ]))
-                
-                elements.append(t)
-                elements.append(Spacer(1, 0.3*inch))
+            for day_data in data:
+                date_str = day_data["date"]
+                tasks = day_data["tasks"]
+                day_total = sum(int(task.get("total_time") or 0) for task in tasks)
 
-        # Build PDF with Footer
+                day_header = Table(
+                    [[
+                        Paragraph(clean_text(nice_date(date_str)), style_section_header),
+                        Paragraph(format_duration(day_total), style_section_header),
+                    ]],
+                    colWidths=[4.55 * inch, 1.25 * inch],
+                )
+                day_header.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, -1), soft_purple),
+                    ("BOX", (0, 0), (-1, -1), 0.5, line),
+                    ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ]))
+                elements.append(day_header)
+
+                if not tasks:
+                    elements.append(Paragraph("No recorded activity.", style_table_muted))
+                    elements.append(Spacer(1, 0.16 * inch))
+                    continue
+
+                table_data = [["Task / Application", "Time", "Sessions"]]
+                for task_data in tasks:
+                    table_data.append([
+                        Paragraph(f"<b>{clean_text(task_data.get('task_title'))}</b>", style_table_text),
+                        Paragraph(f"<b>{format_duration(task_data.get('total_time'))}</b>", style_table_text),
+                        "",
+                    ])
+                    for app in task_data.get("apps", []):
+                        table_data.append([
+                            Paragraph(f"&nbsp;&nbsp;{clean_text(app.get('app_name'))}", style_table_muted),
+                            Paragraph(format_duration(app.get("duration")), style_table_muted),
+                            Paragraph(str(app.get("session_count") or 0), style_table_muted),
+                        ])
+
+                table = Table(table_data, colWidths=[3.75 * inch, 1.0 * inch, 1.05 * inch], repeatRows=1)
+                table.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), rose),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTNAME", (0, 0), (-1, 0), bold_font_name),
+                    ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, soft_pink]),
+                    ("BOX", (0, 0), (-1, -1), 0.5, line),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.25, line),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ]))
+                elements.append(table)
+                elements.append(Spacer(1, 0.2 * inch))
+
         def footer(canvas, doc):
             canvas.saveState()
-            canvas.setFont('Helvetica', 9)
-            canvas.setFillColor(colors.grey)
-            page_num = canvas.getPageNumber()
-            text = f"Page {page_num}"
-            canvas.drawRightString(A4[0] - inch, 0.5*inch, text)
+            canvas.setFont(regular_font_name, 8)
+            canvas.setFillColor(muted)
+            canvas.drawString(doc.leftMargin, 0.35 * inch, "Time Tracker")
+            canvas.drawRightString(A4[0] - doc.rightMargin, 0.35 * inch, f"Page {canvas.getPageNumber()}")
             canvas.restoreState()
 
         doc.build(elements, onFirstPage=footer, onLaterPages=footer)
-
-        # Return PDF
-        pdf_data = buffer.getvalue()
-        buffer.close()
-
-        from fastapi.responses import Response
-        filename = f"folder_report_{folder['name']}.pdf"
-        return Response(
-            content=pdf_data,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f"attachment; filename={filename}"
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error generating folder PDF: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-        folder_title = Paragraph(f"<b>{folder['name']}</b>", folder_title_style)
-        elements.append(Spacer(1, 0.8*inch))
-        elements.append(folder_title)
-        elements.append(Spacer(1, 0.3*inch))
-
-        # Add overall total time under the title (centered)
-        total_style = ParagraphStyle('TotalStyle', parent=styles['Normal'], fontSize=14, alignment=TA_CENTER)
-        elements.append(Paragraph(f"Total time: <b>{format_duration(overall_total)}</b>", total_style))
-        elements.append(PageBreak())
-
-        # --- Detailed per-day sections follow ---
-        if data:
-            for day_data in data:
-                date_str = day_data['date']
-                tasks = day_data['tasks']
-
-                day_heading = Paragraph(f"📅 {date_str}", heading_style)
-                elements.append(day_heading)
-
-                if not tasks:
-                    elements.append(Paragraph("No activities tracked.", styles['Normal']))
-                    elements.append(Spacer(1, 0.2*inch))
-                    continue
-
-                for task_data in tasks:
-                    task_title = task_data['task_title']
-                    task_description = task_data.get('task_description')
-                    apps = task_data['apps']
-                    total_time = task_data['total_time']
-
-                    task_heading = Paragraph(
-                        f"Task: {task_title} (Total: {format_duration(total_time)})",
-                        subheading_style
-                    )
-                    elements.append(task_heading)
-
-                    if task_description:
-                        description_para = Paragraph(f"<i>{task_description}</i>", styles['Normal'])
-                        elements.append(description_para)
-                        elements.append(Spacer(1, 0.1*inch))
-
-                    table_data = [['Application', 'Time Spent']]
-                    for app in apps:
-                        table_data.append([
-                            app['app_name'],
-                            format_duration(app['duration']),
-                        ])
-
-                    table = Table(table_data, colWidths=[3*inch, 1.5*inch, 1*inch])
-                    table.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#8b5cf6')),
-                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
-                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                        ('FONTSIZE', (0, 0), (-1, 0), 10),
-                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                        ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f3f4f6')])
-                    ]))
-
-                    elements.append(table)
-                    elements.append(Spacer(1, 0.15*inch))
-
-                if day_data != data[-1]:
-                    elements.append(PageBreak())
-
-        doc.build(elements)
-
         pdf_data = buffer.getvalue()
         buffer.close()
 
         from fastapi.responses import Response
 
-        filename = f"folder_{folder_id}_{folder['name']}.pdf"
-        # sanitize filename optionally
-        filename = filename.replace(' ', '_')
-
+        filename = re.sub(r"[^A-Za-z0-9_.-]+", "_", f"folder_report_{folder['name']}.pdf")
         return Response(
             content=pdf_data,
             media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
     except ImportError:
         raise HTTPException(
             status_code=500,
-            detail="reportlab not installed. Run: pip install reportlab"
+            detail="reportlab not installed. Run: pip install reportlab",
         )
     except HTTPException:
         raise
@@ -1442,8 +1430,7 @@ async def export_folder_pdf(folder_id: int):
 
 @app.get("/api/export/folder/{folder_id}/details.pdf")
 async def export_folder_details_pdf(folder_id: int):
-    """Generate a PDF containing only folder title (first page) and then
-    a clean list of task name + description (no durations) for all tasks in the folder."""
+    """Generate a polished task brief PDF for a folder."""
     try:
         folder = db.get_folder(folder_id)
         if not folder:
@@ -1452,87 +1439,209 @@ async def export_folder_details_pdf(folder_id: int):
         # Fetch tasks for the folder (no limit or large limit)
         tasks = db.get_tasks(limit=1000, folder_id=folder_id)
 
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib import colors
-        from reportlab.lib.units import inch
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.enums import TA_CENTER, TA_LEFT
         import io
 
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import inch
+        from reportlab.platypus import (
+            PageBreak,
+            Paragraph,
+            SimpleDocTemplate,
+            Spacer,
+            Table,
+            TableStyle,
+        )
+
+        regular_font_name, bold_font_name = resolve_pdf_font_names()
+
         buffer = io.BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.8*inch, bottomMargin=0.5*inch)
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            topMargin=0.65 * inch,
+            bottomMargin=0.55 * inch,
+            leftMargin=0.65 * inch,
+            rightMargin=0.65 * inch,
+        )
 
         elements = []
         styles = getSampleStyleSheet()
+        ink = colors.HexColor("#31283b")
+        muted = colors.HexColor("#7c7289")
+        rose = colors.HexColor("#f472b6")
+        lavender = colors.HexColor("#a78bfa")
+        soft_pink = colors.HexColor("#fff7fb")
+        soft_purple = colors.HexColor("#f3ecff")
+        line = colors.HexColor("#ead7e8")
 
-        # Large folder title style
         folder_title_style = ParagraphStyle(
-            'FolderTitle',
-            parent=styles['Heading1'],
-            fontSize=36,
-            textColor=colors.HexColor('#8b5cf6'),
+            "FolderTitle",
+            parent=styles["Heading1"],
+            fontName=bold_font_name,
+            fontSize=32,
+            leading=36,
+            textColor=ink,
             alignment=TA_CENTER,
-            spaceAfter=12
+            spaceAfter=8,
         )
-
-        # Task title style (fancy)
+        subtitle_style = ParagraphStyle(
+            "FolderDetailsSubtitle",
+            parent=styles["Normal"],
+            fontName=regular_font_name,
+            fontSize=12,
+            leading=16,
+            textColor=muted,
+            alignment=TA_CENTER,
+            spaceAfter=18,
+        )
         task_title_style = ParagraphStyle(
-            'TaskTitle',
-            parent=styles['Heading2'],
-            fontSize=16,
-            fontName='Helvetica-Bold',
-            textColor=colors.HexColor('#111111'),
-            spaceAfter=6,
-            leftIndent=6
+            "TaskTitle",
+            parent=styles["Heading2"],
+            fontName=bold_font_name,
+            fontSize=14,
+            leading=18,
+            textColor=ink,
+            spaceAfter=5,
         )
-
-        # Task description style (darker for readability)
         task_desc_style = ParagraphStyle(
-            'TaskDesc',
-            parent=styles['Normal'],
-            fontSize=11,
-            fontName='Helvetica',
-            textColor=colors.HexColor('#333333'),
-            leftIndent=8,
-            spaceAfter=12
+            "TaskDesc",
+            parent=styles["Normal"],
+            fontName=regular_font_name,
+            fontSize=10.5,
+            leading=15,
+            textColor=muted,
+        )
+        task_title_style_rtl = ParagraphStyle(
+            "TaskTitleRTL",
+            parent=task_title_style,
+            alignment=TA_RIGHT,
+            wordWrap="RTL",
         )
 
-        # First page: folder name only
-        elements.append(Spacer(1, 1.0*inch))
-        elements.append(Paragraph(f"<b>{folder['name']}</b>", folder_title_style))
+        task_desc_style_rtl = ParagraphStyle(
+            "TaskDescRTL",
+            parent=task_desc_style,
+            alignment=TA_RIGHT,
+            wordWrap="RTL",
+        )
+
+        empty_state_style = ParagraphStyle(
+            "TaskEmptyState",
+            parent=styles["Normal"],
+            fontName=regular_font_name,
+            textColor=muted,
+            alignment=TA_CENTER,
+        )
+
+        elements.append(Spacer(1, 0.35 * inch))
+        folder_name = (
+            to_pdf_paragraph_text(folder["name"]) or f"Folder {folder_id}"
+        )
+        elements.append(Paragraph(folder_name, folder_title_style))
+        elements.append(Paragraph("Task brief and descriptions", subtitle_style))
+        cover_table = Table(
+            [[
+                Paragraph("TASKS", task_desc_style),
+                Paragraph(str(len(tasks)), task_title_style),
+            ]],
+            colWidths=[1.4 * inch, 1.0 * inch],
+        )
+        cover_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), soft_purple),
+            ("BOX", (0, 0), (-1, -1), 0.7, lavender),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 12),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+        ]))
+        elements.append(cover_table)
         elements.append(PageBreak())
 
-        # Then each task: title + description (no durations)
-        if not tasks:
-            elements.append(Paragraph("No tasks in this folder.", styles['Normal']))
-        else:
-            for t in tasks:
-                title = t.get('title') or f"Task {t.get('id')}"
-                desc = t.get('description') or ''
-                elements.append(Paragraph(title, task_title_style))
-                if desc:
-                    # Wrap description in italic for a 'fancy' look
-                    elements.append(Paragraph(f"<i>{desc}</i>", task_desc_style))
-                else:
-                    # Add a small spacer if no description to keep spacing consistent
-                    elements.append(Spacer(1, 0.1*inch))
+        elements.append(Paragraph("Tasks", folder_title_style))
+        elements.append(Paragraph("A clean view of task names and notes.", subtitle_style))
 
-        doc.build(elements)
+        if not tasks:
+            elements.append(
+                Paragraph("No tasks in this folder.", empty_state_style)
+            )
+        else:
+            for index, t in enumerate(tasks, start=1):
+                raw_title = t.get("title") or ""
+                raw_desc = t.get("description") or ""
+                title = to_pdf_paragraph_text(
+                    raw_title
+                ) or to_pdf_paragraph_text(f"Task {t.get('id')}")
+                desc = to_pdf_paragraph_text(raw_desc) or "No description added."
+                has_rtl_text = bool(
+                    ARABIC_TEXT_RE.search(raw_title)
+                    or ARABIC_TEXT_RE.search(raw_desc)
+                )
+                title_style = (
+                    task_title_style_rtl if has_rtl_text else task_title_style
+                )
+                desc_style = (
+                    task_desc_style_rtl if has_rtl_text else task_desc_style
+                )
+
+                number_style = ParagraphStyle(
+                    f"TaskNumber{index}",
+                    parent=task_title_style,
+                    alignment=TA_CENTER,
+                    textColor=colors.white,
+                )
+                card = Table(
+                    [[
+                        Paragraph(str(index), number_style),
+                        [Paragraph(title, title_style), Paragraph(desc, desc_style)],
+                    ]],
+                    colWidths=[0.45 * inch, 5.15 * inch],
+                )
+                card.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (0, 0), rose),
+                    ("BACKGROUND", (1, 0), (1, 0), soft_pink),
+                    ("BOX", (0, 0), (-1, -1), 0.5, line),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("TOPPADDING", (0, 0), (-1, -1), 10),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ]))
+                elements.append(card)
+                elements.append(Spacer(1, 0.14 * inch))
+
+        def footer(canvas, doc):
+            canvas.saveState()
+            canvas.setFont(regular_font_name, 8)
+            canvas.setFillColor(muted)
+            canvas.drawString(doc.leftMargin, 0.35 * inch, "Time Tracker")
+            canvas.drawRightString(A4[0] - doc.rightMargin, 0.35 * inch, f"Page {canvas.getPageNumber()}")
+            canvas.restoreState()
+
+        doc.build(elements, onFirstPage=footer, onLaterPages=footer)
 
         pdf_data = buffer.getvalue()
         buffer.close()
 
         from fastapi.responses import Response
 
-        filename = f"folder_{folder_id}_{folder['name']}_details.pdf".replace(' ', '_')
+        filename = re.sub(
+            r"[^A-Za-z0-9_.-]+",
+            "_",
+            f"folder_{folder_id}_{folder['name']}_details.pdf",
+        )
         return Response(
             content=pdf_data,
             media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
     except ImportError:
-        raise HTTPException(status_code=500, detail="reportlab not installed. Run: pip install reportlab")
+        raise HTTPException(
+            status_code=500,
+            detail="reportlab not installed. Run: pip install reportlab",
+        )
     except HTTPException:
         raise
     except Exception as e:
