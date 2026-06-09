@@ -53,10 +53,24 @@ db = Database(config.DB_PATH)
 
 # Tracker will be initialized on startup (may require compositor/runtime to be available)
 tracker = None
+tracker_init_lock = asyncio.Lock()
 
 ARABIC_TEXT_RE = re.compile(
     r"[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]"
 )
+
+
+async def ensure_tracker():
+    """Initialize the tracker if it was unavailable during application startup."""
+    global tracker
+    if tracker is not None:
+        return tracker
+
+    async with tracker_init_lock:
+        if tracker is None:
+            tracker = create_tracker(db, config.TRACKER_POLL_INTERVAL)
+            logger.info("Tracker initialized")
+    return tracker
 
 
 def resolve_pdf_font_names() -> Tuple[str, str]:
@@ -176,6 +190,7 @@ class TrackerStatusResponse(BaseModel):
     current_window: Optional[str]
     activity_id: Optional[int]
     task_id: Optional[int]
+    start_time: Optional[str]
 
 
 class TaskResponse(BaseModel):
@@ -287,10 +302,13 @@ async def health_check():
 @app.get("/api/tracker/status", response_model=TrackerStatusResponse)
 async def get_tracker_status():
     """Get current tracker status"""
-    if not tracker:
+    try:
+        active_tracker = await ensure_tracker()
+    except Exception as e:
+        logger.warning(f"Tracker is unavailable: {e}")
         raise HTTPException(status_code=503, detail="Tracker not available")
 
-    return tracker.get_status()
+    return active_tracker.get_status()
 
 
 # Task Management Endpoints
@@ -567,7 +585,10 @@ async def get_task_stats(task_id: int):
 @app.post("/api/tracker/start")
 async def start_tracking(task_id: int):
     """Start tracking for a specific task"""
-    if not tracker:
+    try:
+        active_tracker = await ensure_tracker()
+    except Exception as e:
+        logger.warning(f"Tracker is unavailable: {e}")
         raise HTTPException(status_code=503, detail="Tracker not available")
 
     try:
@@ -577,11 +598,11 @@ async def start_tracking(task_id: int):
             raise HTTPException(status_code=404, detail="Task not found")
 
         # Stop current tracking if running
-        if tracker.running:
-            tracker.stop_tracking()
+        if active_tracker.running:
+            active_tracker.stop_tracking()
 
         # Start tracking for new task
-        tracker.start_tracking(task_id)
+        active_tracker.start_tracking(task_id)
 
         return {
             "status": "started",
@@ -598,11 +619,14 @@ async def start_tracking(task_id: int):
 @app.post("/api/tracker/stop")
 async def stop_tracking():
     """Stop tracking"""
-    if not tracker:
+    try:
+        active_tracker = await ensure_tracker()
+    except Exception as e:
+        logger.warning(f"Tracker is unavailable: {e}")
         raise HTTPException(status_code=503, detail="Tracker not available")
 
     try:
-        tracker.stop_tracking()
+        active_tracker.stop_tracking()
         return {"status": "stopped"}
     except Exception as e:
         logger.error(f"Error stopping tracker: {e}")

@@ -5,13 +5,41 @@ Monitors active windows and tracks application usage
 import subprocess
 import json
 import logging
-import time
+import os
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Dict, Tuple
 import threading
 
 logger = logging.getLogger(__name__)
 from database import normalize_app_name
+
+
+def get_hyprland_environment() -> Optional[Dict[str, str]]:
+    """Return an environment that lets hyprctl connect to the active compositor."""
+    environment = os.environ.copy()
+    if environment.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return environment
+
+    runtime_dir = Path(
+        environment.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    )
+    hyprland_dir = runtime_dir / "hypr"
+    if not hyprland_dir.is_dir():
+        return None
+
+    instances = [
+        path
+        for path in hyprland_dir.iterdir()
+        if path.is_dir() and (path / ".socket.sock").exists()
+    ]
+    if not instances:
+        return None
+
+    active_instance = max(instances, key=lambda path: path.stat().st_mtime)
+    environment["XDG_RUNTIME_DIR"] = str(runtime_dir)
+    environment["HYPRLAND_INSTANCE_SIGNATURE"] = active_instance.name
+    return environment
 
 
 class HyprlandTracker:
@@ -26,6 +54,8 @@ class HyprlandTracker:
         self.last_window_title = None
         self.running = False
         self.thread = None
+        self.stop_event = threading.Event()
+        self.started_at = None
 
     def get_active_window(self) -> Optional[Tuple[str, str]]:
         """
@@ -38,7 +68,8 @@ class HyprlandTracker:
                 ['hyprctl', 'activewindow', '-j'],
                 capture_output=True,
                 text=True,
-                timeout=1
+                timeout=1,
+                env=get_hyprland_environment()
             )
 
             if result.returncode == 0:
@@ -81,7 +112,8 @@ class HyprlandTracker:
                 ['hyprctl', 'dispatch', 'exec', 'true'],
                 capture_output=True,
                 text=True,
-                timeout=1
+                timeout=1,
+                env=get_hyprland_environment()
             )
             # If we can execute commands, system is not idle
             return False
@@ -96,6 +128,11 @@ class HyprlandTracker:
             return
 
         self.current_task_id = task_id
+        self.current_activity_id = None
+        self.last_app_name = None
+        self.last_window_title = None
+        self.started_at = datetime.now().astimezone()
+        self.stop_event.clear()
         self.running = True
         self.thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self.thread.start()
@@ -107,15 +144,21 @@ class HyprlandTracker:
             return
 
         self.running = False
-        
-        # End current activity if any
+        self.stop_event.set()
+
+        if self.thread:
+            self.thread.join(timeout=5)
+
+        # Finalize only after the worker has stopped changing activity state.
         if self.current_activity_id:
             self.database.end_activity(self.current_activity_id)
             self.current_activity_id = None
 
-        if self.thread:
-            self.thread.join(timeout=5)
-        
+        self.thread = None
+        self.current_task_id = None
+        self.last_app_name = None
+        self.last_window_title = None
+        self.started_at = None
         logger.info("Tracker stopped")
 
     def _tracking_loop(self):
@@ -166,8 +209,7 @@ class HyprlandTracker:
             except Exception as e:
                 logger.error(f"Error in tracking loop: {e}")
 
-            # Wait before next check
-            time.sleep(self.poll_interval)
+            self.stop_event.wait(self.poll_interval)
 
         logger.info("Tracking loop ended")
 
@@ -178,7 +220,8 @@ class HyprlandTracker:
             'current_app': self.last_app_name,
             'current_window': self.last_window_title,
             'activity_id': self.current_activity_id,
-            'task_id': self.current_task_id
+            'task_id': self.current_task_id,
+            'start_time': self.started_at.isoformat() if self.started_at else None
         }
 
 
@@ -195,6 +238,8 @@ class X11Tracker:
         self.last_window_title = None
         self.running = False
         self.thread = None
+        self.stop_event = threading.Event()
+        self.started_at = None
 
     def get_active_window(self) -> Optional[Tuple[str, str]]:
         """Get active window using xdotool and xprop"""
@@ -251,6 +296,11 @@ class X11Tracker:
         if self.running:
             return
         self.current_task_id = task_id
+        self.current_activity_id = None
+        self.last_app_name = None
+        self.last_window_title = None
+        self.started_at = datetime.now().astimezone()
+        self.stop_event.clear()
         self.running = True
         self.thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self.thread.start()
@@ -260,11 +310,17 @@ class X11Tracker:
         if not self.running:
             return
         self.running = False
+        self.stop_event.set()
+        if self.thread:
+            self.thread.join(timeout=5)
         if self.current_activity_id:
             self.database.end_activity(self.current_activity_id)
             self.current_activity_id = None
-        if self.thread:
-            self.thread.join(timeout=5)
+        self.thread = None
+        self.current_task_id = None
+        self.last_app_name = None
+        self.last_window_title = None
+        self.started_at = None
         logger.info("X11 Tracker stopped")
 
     def _tracking_loop(self):
@@ -288,7 +344,7 @@ class X11Tracker:
                         self.last_window_title = window_title
             except Exception as e:
                 logger.error(f"Error in X11 tracking loop: {e}")
-            time.sleep(self.poll_interval)
+            self.stop_event.wait(self.poll_interval)
 
     def get_status(self) -> Dict:
         return {
@@ -296,7 +352,8 @@ class X11Tracker:
             'current_app': self.last_app_name,
             'current_window': self.last_window_title,
             'activity_id': self.current_activity_id,
-            'task_id': self.current_task_id
+            'task_id': self.current_task_id,
+            'start_time': self.started_at.isoformat() if self.started_at else None
         }
 
 
@@ -307,10 +364,14 @@ def create_tracker(database, poll_interval: int = 2):
     """
     # Check if Hyprland is available
     try:
+        environment = get_hyprland_environment()
+        if environment is None:
+            raise RuntimeError("No active Hyprland socket found")
         result = subprocess.run(
             ['hyprctl', 'version'],
             capture_output=True,
-            timeout=1
+            timeout=1,
+            env=environment
         )
         if result.returncode == 0:
             logger.info("Using Hyprland tracker")
