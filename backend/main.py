@@ -2,33 +2,33 @@
 FastAPI backend for the Time Tracker application
 Provides REST API for tracking data and serves the frontend
 """
+
+import asyncio
 import logging
 import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from xml.sax.saxutils import escape
 from typing import List, Optional, Tuple
-
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from xml.sax.saxutils import escape
 
 import config
 from database import Database
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from tracker import create_tracker
-import asyncio
 
 # Configure logging
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(config.LOG_FILE)
-    ]
+        logging.FileHandler(config.LOG_FILE),
+    ],
 )
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title=config.APP_NAME,
     version=config.APP_VERSION,
-    description="Time tracking application for Arch Linux with Hyprland"
+    description="Time tracking application for Arch Linux with Hyprland",
 )
 
 # Add CORS middleware
@@ -247,14 +247,18 @@ async def startup_event():
         for attempt in range(1, attempts + 1):
             try:
                 tracker = create_tracker(db, config.TRACKER_POLL_INTERVAL)
-                logger.info("Tracker initialized (not started - waiting for manual start)")
+                logger.info(
+                    "Tracker initialized (not started - waiting for manual start)"
+                )
                 break
             except Exception as e:
                 logger.warning(f"Tracker init attempt {attempt} failed: {e}")
                 if attempt < attempts:
                     await asyncio.sleep(delay)
                 else:
-                    logger.error("Failed to initialize tracker after retries. API will run without tracking functionality")
+                    logger.error(
+                        "Failed to initialize tracker after retries. API will run without tracking functionality"
+                    )
 
 
 @app.on_event("shutdown")
@@ -276,7 +280,7 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "tracker_available": tracker is not None
+        "tracker_available": tracker is not None,
     }
 
 
@@ -285,13 +289,17 @@ async def get_tracker_status():
     """Get current tracker status"""
     if not tracker:
         raise HTTPException(status_code=503, detail="Tracker not available")
-    
+
     return tracker.get_status()
 
 
 # Task Management Endpoints
 @app.post("/api/tasks", response_model=TaskResponse)
-async def create_task(title: str, description: Optional[str] = None, folder_id: Optional[int] = None):
+async def create_task(
+    title: str,
+    description: Optional[str] = None,
+    folder_id: Optional[int] = None,
+):
     """Create a new task"""
     try:
         task_id = db.create_task(title, description, folder_id)
@@ -303,7 +311,10 @@ async def create_task(title: str, description: Optional[str] = None, folder_id: 
 
 
 @app.get("/api/tasks")
-async def get_tasks(limit: int = Query(default=100, ge=1, le=1000), folder_id: Optional[int] = None):
+async def get_tasks(
+    limit: int = Query(default=100, ge=1, le=1000),
+    folder_id: Optional[int] = None,
+):
     """Get all tasks"""
     try:
         tasks = db.get_tasks(limit, folder_id)
@@ -450,7 +461,9 @@ async def create_folder(request: CreateFolderRequest):
     """Create a new folder"""
     name = request.name.strip()
     if not name:
-        raise HTTPException(status_code=400, detail="Folder name cannot be empty")
+        raise HTTPException(
+            status_code=400, detail="Folder name cannot be empty"
+        )
 
     try:
         folder_id = db.create_folder(name, request.project_id)
@@ -469,14 +482,16 @@ async def rename_folder(folder_id: int, request: RenameFolderRequest):
     """Rename an existing folder"""
     name = request.name.strip()
     if not name:
-        raise HTTPException(status_code=400, detail="Folder name cannot be empty")
+        raise HTTPException(
+            status_code=400, detail="Folder name cannot be empty"
+        )
 
     try:
         updated = db.rename_folder(folder_id, name)
         if not updated:
             raise HTTPException(status_code=404, detail="Folder not found")
         folders = db.get_folders_with_stats()
-        folder = next((f for f in folders if f['id'] == folder_id), None)
+        folder = next((f for f in folders if f["id"] == folder_id), None)
         if not folder:
             raise HTTPException(status_code=404, detail="Folder not found")
         return folder
@@ -489,7 +504,6 @@ async def rename_folder(folder_id: int, request: RenameFolderRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-
 class UpdateTaskRequest(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
@@ -499,10 +513,12 @@ class UpdateTaskRequest(BaseModel):
 async def update_task(task_id: int, task_data: UpdateTaskRequest):
     """Update task details"""
     try:
-        updated = db.update_task(task_id, task_data.title, task_data.description)
+        updated = db.update_task(
+            task_id, task_data.title, task_data.description
+        )
         if not updated:
             raise HTTPException(status_code=404, detail="Task not found")
-        
+
         task = db.get_task(task_id)
         return task
     except Exception as e:
@@ -516,7 +532,9 @@ async def delete_folder(folder_id: int):
     try:
         deleted = db.delete_folder(folder_id)
         if not deleted:
-            raise HTTPException(status_code=404, detail="Folder not found or already deleted")
+            raise HTTPException(
+                status_code=404, detail="Folder not found or already deleted"
+            )
         folders = db.get_folders_with_stats()
         return {"status": "deleted", "folder_id": folder_id, "folders": folders}
     except ValueError as e:
@@ -535,12 +553,9 @@ async def get_task_stats(task_id: int):
         task = db.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
-        
+
         stats = db.get_task_stats(task_id)
-        return {
-            "task": task,
-            "stats": stats
-        }
+        return {"task": task, "stats": stats}
     except HTTPException:
         raise
     except Exception as e:
@@ -554,24 +569,24 @@ async def start_tracking(task_id: int):
     """Start tracking for a specific task"""
     if not tracker:
         raise HTTPException(status_code=503, detail="Tracker not available")
-    
+
     try:
         # Verify task exists
         task = db.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
-        
+
         # Stop current tracking if running
         if tracker.running:
             tracker.stop_tracking()
-        
+
         # Start tracking for new task
         tracker.start_tracking(task_id)
-        
+
         return {
             "status": "started",
             "task_id": task_id,
-            "task_title": task['title']
+            "task_title": task["title"],
         }
     except HTTPException:
         raise
@@ -585,7 +600,7 @@ async def stop_tracking():
     """Stop tracking"""
     if not tracker:
         raise HTTPException(status_code=503, detail="Tracker not available")
-    
+
     try:
         tracker.stop_tracking()
         return {"status": "stopped"}
@@ -598,7 +613,7 @@ async def stop_tracking():
 async def get_daily_stats(date: Optional[str] = None):
     """
     Get daily statistics
-    
+
     Args:
         date: Date in YYYY-MM-DD format (default: today)
     """
@@ -606,7 +621,7 @@ async def get_daily_stats(date: Optional[str] = None):
         stats = db.get_daily_stats(date)
         return {
             "date": date or datetime.now().strftime("%Y-%m-%d"),
-            "statistics": stats
+            "statistics": stats,
         }
     except Exception as e:
         logger.error(f"Error getting daily stats: {e}")
@@ -617,25 +632,26 @@ async def get_daily_stats(date: Optional[str] = None):
 async def get_weekly_stats(start_date: Optional[str] = None):
     """
     Get weekly statistics
-    
+
     Args:
         start_date: Start date in YYYY-MM-DD format (default: 7 days ago)
     """
     try:
         stats = db.get_weekly_stats(start_date)
-        
+
         # Group by date for easier frontend consumption
         grouped = {}
         for stat in stats:
-            date = stat['date']
+            date = stat["date"]
             if date not in grouped:
                 grouped[date] = []
             grouped[date].append(stat)
-        
+
         return {
-            "start_date": start_date or (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"),
+            "start_date": start_date
+            or (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"),
             "end_date": datetime.now().strftime("%Y-%m-%d"),
-            "statistics": grouped
+            "statistics": grouped,
         }
     except Exception as e:
         logger.error(f"Error getting weekly stats: {e}")
@@ -646,20 +662,17 @@ async def get_weekly_stats(start_date: Optional[str] = None):
 async def get_year_stats(year: Optional[int] = None):
     """
     Get yearly statistics
-    
+
     Args:
         year: Year (default: current year)
     """
     try:
         if year is None:
             year = datetime.now().year
-            
+
         stats = db.get_year_stats(year)
-        
-        return {
-            "year": year,
-            "statistics": stats
-        }
+
+        return {"year": year, "statistics": stats}
     except Exception as e:
         logger.error(f"Error getting year stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -667,12 +680,11 @@ async def get_year_stats(year: Optional[int] = None):
 
 @app.get("/api/timeline")
 async def get_timeline(
-    date: Optional[str] = None,
-    limit: Optional[int] = Query(default=None, ge=1)
+    date: Optional[str] = None, limit: Optional[int] = Query(default=None, ge=1)
 ):
     """
     Get activity timeline
-    
+
     Args:
         date: Date in YYYY-MM-DD format (default: today)
         limit: Maximum number of activities to return
@@ -681,7 +693,7 @@ async def get_timeline(
         timeline = db.get_timeline(date, limit)
         return {
             "date": date or datetime.now().strftime("%Y-%m-%d"),
-            "activities": timeline
+            "activities": timeline,
         }
     except Exception as e:
         logger.error(f"Error getting timeline: {e}")
@@ -693,9 +705,7 @@ async def get_applications():
     """Get all tracked applications"""
     try:
         applications = db.get_all_applications()
-        return {
-            "applications": applications
-        }
+        return {"applications": applications}
     except Exception as e:
         logger.error(f"Error getting applications: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -706,11 +716,11 @@ async def get_activities(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     app_name: Optional[str] = None,
-    limit: int = Query(default=1000, ge=1, le=10000)
+    limit: int = Query(default=1000, ge=1, le=10000),
 ):
     """
     Get activities with optional filters
-    
+
     Args:
         start_date: Start date in YYYY-MM-DD format
         end_date: End date in YYYY-MM-DD format
@@ -719,10 +729,7 @@ async def get_activities(
     """
     try:
         activities = db.get_activities(start_date, end_date, app_name, limit)
-        return {
-            "activities": activities,
-            "count": len(activities)
-        }
+        return {"activities": activities, "count": len(activities)}
     except Exception as e:
         logger.error(f"Error getting activities: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -753,7 +760,7 @@ async def get_category_stats():
 @app.get("/api/export/data")
 async def export_data(
     start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
-    end_date: str = Query(..., description="End date in YYYY-MM-DD format")
+    end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
 ):
     """
     Get activities grouped by date -> task -> app for export
@@ -761,11 +768,7 @@ async def export_data(
     """
     try:
         data = db.get_export_data(start_date, end_date)
-        return {
-            "start_date": start_date,
-            "end_date": end_date,
-            "data": data
-        }
+        return {"start_date": start_date, "end_date": end_date, "data": data}
     except Exception as e:
         logger.error(f"Error getting export data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -774,48 +777,62 @@ async def export_data(
 @app.post("/api/export/pdf")
 async def export_pdf(
     start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
-    end_date: str = Query(..., description="End date in YYYY-MM-DD format")
+    end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
 ):
     """Generate and download PDF report for date range with summary and details"""
     try:
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib import colors
-        from reportlab.lib.units import inch, cm
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Frame, PageTemplate
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
         import io
-        
+
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import cm, inch
+        from reportlab.platypus import (
+            Frame,
+            PageBreak,
+            PageTemplate,
+            Paragraph,
+            SimpleDocTemplate,
+            Spacer,
+            Table,
+            TableStyle,
+        )
+
         # Get data
         data = db.get_export_data(start_date, end_date)
-        
+
         # Calculate summary stats
         total_seconds = 0
         app_stats = {}
         task_stats = {}
-        
+
         for day_data in data:
-            for task in day_data.get('tasks', []):
-                t_seconds = task['total_time']
+            for task in day_data.get("tasks", []):
+                t_seconds = task["total_time"]
                 total_seconds += t_seconds
-                
+
                 # Task Stats
-                t_title = task['task_title']
+                t_title = task["task_title"]
                 if t_title not in task_stats:
                     task_stats[t_title] = 0
                 task_stats[t_title] += t_seconds
-                
+
                 # App Stats
-                for app in task.get('apps', []):
-                    a_name = app['app_name']
-                    a_seconds = app['duration']
+                for app in task.get("apps", []):
+                    a_name = app["app_name"]
+                    a_seconds = app["duration"]
                     if a_name not in app_stats:
                         app_stats[a_name] = 0
                     app_stats[a_name] += a_seconds
 
         # Sort stats
-        sorted_apps = sorted(app_stats.items(), key=lambda x: x[1], reverse=True)[:5]
-        sorted_tasks = sorted(task_stats.items(), key=lambda x: x[1], reverse=True)[:5]
+        sorted_apps = sorted(
+            app_stats.items(), key=lambda x: x[1], reverse=True
+        )[:5]
+        sorted_tasks = sorted(
+            task_stats.items(), key=lambda x: x[1], reverse=True
+        )[:5]
 
         # Helper function to format duration
         def format_duration(seconds):
@@ -839,279 +856,344 @@ async def export_pdf(
         # Create PDF in memory
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
-            buffer, 
-            pagesize=A4, 
-            topMargin=0.8*inch, 
-            bottomMargin=0.8*inch,
-            leftMargin=0.8*inch,
-            rightMargin=0.8*inch
+            buffer,
+            pagesize=A4,
+            topMargin=0.8 * inch,
+            bottomMargin=0.8 * inch,
+            leftMargin=0.8 * inch,
+            rightMargin=0.8 * inch,
         )
-        
+
         # Define styles
         styles = getSampleStyleSheet()
-        
+
         # Color Palette
-        PRIMARY_COLOR = colors.HexColor('#6366f1') # Indigo 500
-        SECONDARY_COLOR = colors.HexColor('#8b5cf6') # Violet 500
-        ACCENT_COLOR = colors.HexColor('#a5b4fc') # Indigo 300
-        BG_COLOR = colors.HexColor('#f9fafb') # Gray 50
-        TEXT_COLOR = colors.HexColor('#1f2937') # Gray 800
-        LIGHT_TEXT_COLOR = colors.HexColor('#6b7280') # Gray 500
-        
+        PRIMARY_COLOR = colors.HexColor("#6366f1")  # Indigo 500
+        SECONDARY_COLOR = colors.HexColor("#8b5cf6")  # Violet 500
+        ACCENT_COLOR = colors.HexColor("#a5b4fc")  # Indigo 300
+        BG_COLOR = colors.HexColor("#f9fafb")  # Gray 50
+        TEXT_COLOR = colors.HexColor("#1f2937")  # Gray 800
+        LIGHT_TEXT_COLOR = colors.HexColor("#6b7280")  # Gray 500
+
         # Custom Styles
         style_title = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
+            "CustomTitle",
+            parent=styles["Heading1"],
             fontSize=28,
             textColor=PRIMARY_COLOR,
             spaceAfter=10,
             alignment=TA_CENTER,
-            fontName='Helvetica-Bold'
+            fontName="Helvetica-Bold",
         )
-        
+
         style_subtitle = ParagraphStyle(
-            'CustomSubtitle',
-            parent=styles['Normal'],
+            "CustomSubtitle",
+            parent=styles["Normal"],
             fontSize=12,
             textColor=LIGHT_TEXT_COLOR,
             spaceAfter=40,
-            alignment=TA_CENTER
+            alignment=TA_CENTER,
         )
-        
+
         style_section_header = ParagraphStyle(
-            'SectionHeader',
-            parent=styles['Heading2'],
+            "SectionHeader",
+            parent=styles["Heading2"],
             fontSize=16,
             textColor=SECONDARY_COLOR,
             spaceBefore=20,
             spaceAfter=10,
-            fontName='Helvetica-Bold'
+            fontName="Helvetica-Bold",
         )
-        
+
         style_card_label = ParagraphStyle(
-            'CardLabel',
-            parent=styles['Normal'],
+            "CardLabel",
+            parent=styles["Normal"],
             fontSize=10,
             textColor=LIGHT_TEXT_COLOR,
-            alignment=TA_CENTER
+            alignment=TA_CENTER,
         )
-        
+
         style_card_value = ParagraphStyle(
-            'CardValue',
-            parent=styles['Heading2'],
+            "CardValue",
+            parent=styles["Heading2"],
             fontSize=20,
             textColor=TEXT_COLOR,
             alignment=TA_CENTER,
-            fontName='Helvetica-Bold'
+            fontName="Helvetica-Bold",
         )
-        
+
         style_table_header = ParagraphStyle(
-            'TableHeader',
-            parent=styles['Normal'],
+            "TableHeader",
+            parent=styles["Normal"],
             fontSize=10,
             textColor=colors.white,
-            fontName='Helvetica-Bold'
+            fontName="Helvetica-Bold",
         )
-        
+
         # Container for elements
         elements = []
-        
+
         # --- TITLE PAGE / SUMMARY ---
-        
+
         elements.append(Paragraph("Time Tracking Report", style_title))
         elements.append(Paragraph(f"{start_date} — {end_date}", style_subtitle))
-        
+
         # Total Time Card
         elements.append(Paragraph("TOTAL TIME LOGGED", style_card_label))
-        elements.append(Paragraph(format_duration(total_seconds), style_card_value))
-        elements.append(Spacer(1, 0.5*inch))
-        
+        elements.append(
+            Paragraph(format_duration(total_seconds), style_card_value)
+        )
+        elements.append(Spacer(1, 0.5 * inch))
+
         # Top Applications & Tasks Table
         elements.append(Paragraph("Top Applications", style_section_header))
-        
+
         if sorted_apps:
-            table_data = [['Application', 'Duration']]
+            table_data = [["Application", "Duration"]]
             for app, dur in sorted_apps:
                 table_data.append([app, format_duration(dur)])
-            
-            t = Table(table_data, colWidths=[4*inch, 2*inch])
-            t.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), PRIMARY_COLOR),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-                ('TOPPADDING', (0, 0), (-1, 0), 10),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, BG_COLOR]),
-            ]))
+
+            t = Table(table_data, colWidths=[4 * inch, 2 * inch])
+            t.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), PRIMARY_COLOR),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("BOTTOMPADDING", (0, 0), (-1, 0), 10),
+                        ("TOPPADDING", (0, 0), (-1, 0), 10),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                        (
+                            "ROWBACKGROUNDS",
+                            (0, 1),
+                            (-1, -1),
+                            [colors.white, BG_COLOR],
+                        ),
+                    ]
+                )
+            )
             elements.append(t)
         else:
-            elements.append(Paragraph("No application data available.", styles['Normal']))
-            
-        elements.append(Spacer(1, 0.3*inch))
+            elements.append(
+                Paragraph("No application data available.", styles["Normal"])
+            )
+
+        elements.append(Spacer(1, 0.3 * inch))
         elements.append(Paragraph("Top Tasks", style_section_header))
-        
+
         if sorted_tasks:
-            table_data = [['Task', 'Duration']]
+            table_data = [["Task", "Duration"]]
             for task, dur in sorted_tasks:
                 table_data.append([task, format_duration(dur)])
-            
-            t = Table(table_data, colWidths=[4*inch, 2*inch])
-            t.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), SECONDARY_COLOR),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-                ('TOPPADDING', (0, 0), (-1, 0), 10),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, BG_COLOR]),
-            ]))
+
+            t = Table(table_data, colWidths=[4 * inch, 2 * inch])
+            t.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), SECONDARY_COLOR),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("BOTTOMPADDING", (0, 0), (-1, 0), 10),
+                        ("TOPPADDING", (0, 0), (-1, 0), 10),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.lightgrey),
+                        (
+                            "ROWBACKGROUNDS",
+                            (0, 1),
+                            (-1, -1),
+                            [colors.white, BG_COLOR],
+                        ),
+                    ]
+                )
+            )
             elements.append(t)
         else:
-            elements.append(Paragraph("No task data available.", styles['Normal']))
-            
+            elements.append(
+                Paragraph("No task data available.", styles["Normal"])
+            )
+
         elements.append(PageBreak())
-        
+
         # --- DETAILED REPORT ---
-        
+
         # Styles for details
         style_day_header = ParagraphStyle(
-            'DayHeader',
-            parent=styles['Heading2'],
+            "DayHeader",
+            parent=styles["Heading2"],
             fontSize=14,
             textColor=TEXT_COLOR,
             spaceBefore=15,
             spaceAfter=10,
-            fontName='Helvetica-Bold',
+            fontName="Helvetica-Bold",
             borderPadding=5,
             borderColor=colors.lightgrey,
             borderWidth=0,
-            backColor=colors.HexColor('#f3f4f6')
+            backColor=colors.HexColor("#f3f4f6"),
         )
-        
+
         style_task_title = ParagraphStyle(
-            'TaskTitle',
-            parent=styles['Heading3'],
+            "TaskTitle",
+            parent=styles["Heading3"],
             fontSize=11,
             textColor=PRIMARY_COLOR,
             spaceBefore=5,
             spaceAfter=2,
-            fontName='Helvetica-Bold'
+            fontName="Helvetica-Bold",
         )
 
         elements.append(Paragraph("Detailed Daily Activity", style_title))
-        elements.append(Spacer(1, 0.2*inch))
-        
+        elements.append(Spacer(1, 0.2 * inch))
+
         if not data:
-             elements.append(Paragraph("No activities found for this period.", styles['Normal']))
+            elements.append(
+                Paragraph(
+                    "No activities found for this period.", styles["Normal"]
+                )
+            )
         else:
             for i, day_data in enumerate(data):
-                date_str = day_data['date']
-                tasks = day_data['tasks']
-                
+                date_str = day_data["date"]
+                tasks = day_data["tasks"]
+
                 # Format nice date: "2023-10-27" -> "Friday, Oct 27"
                 try:
                     dt = datetime.strptime(date_str, "%Y-%m-%d")
                     nice_date = dt.strftime("%A, %b %d")
                 except:
                     nice_date = date_str
-                
+
                 elements.append(Paragraph(f"📅 {nice_date}", style_day_header))
-                
+
                 if not tasks:
-                    elements.append(Paragraph("No recorded activity.", styles['Italic']))
+                    elements.append(
+                        Paragraph("No recorded activity.", styles["Italic"])
+                    )
                     continue
-                    
-                table_data = [['Task / Application', 'Time', 'Sessions']]
-                
+
+                table_data = [["Task / Application", "Time", "Sessions"]]
+
                 for task_data in tasks:
                     # Task Row
-                    task_title = task_data['task_title']
-                    task_total = format_duration_detailed(task_data['total_time'])
-                    
+                    task_title = task_data["task_title"]
+                    task_total = format_duration_detailed(
+                        task_data["total_time"]
+                    )
+
                     # Add task as a "Section" row in the table
-                    table_data.append([
-                        Paragraph(f"<b>{task_title}</b>", styles['Normal']),
-                        Paragraph(f"<b>{task_total}</b>", styles['Normal']),
-                        ""
-                    ])
-                    
+                    table_data.append(
+                        [
+                            Paragraph(f"<b>{task_title}</b>", styles["Normal"]),
+                            Paragraph(f"<b>{task_total}</b>", styles["Normal"]),
+                            "",
+                        ]
+                    )
+
                     # App Rows
-                    for app in task_data.get('apps', []):
-                        app_name = app['app_name']
-                        app_dur = format_duration_detailed(app['duration'])
-                        sess_count = str(app['session_count'])
-                        
-                        table_data.append([
-                            Paragraph(f"<font color='#6b7280'>&nbsp;&nbsp;&nbsp;• {app_name}</font>", styles['Normal']),
-                            Paragraph(f"<font color='#6b7280'>{app_dur}</font>", styles['Normal']),
-                            Paragraph(f"<font color='#6b7280'>{sess_count}</font>", styles['Normal'])
-                        ])
-                
+                    for app in task_data.get("apps", []):
+                        app_name = app["app_name"]
+                        app_dur = format_duration_detailed(app["duration"])
+                        sess_count = str(app["session_count"])
+
+                        table_data.append(
+                            [
+                                Paragraph(
+                                    f"<font color='#6b7280'>&nbsp;&nbsp;&nbsp;• {app_name}</font>",
+                                    styles["Normal"],
+                                ),
+                                Paragraph(
+                                    f"<font color='#6b7280'>{app_dur}</font>",
+                                    styles["Normal"],
+                                ),
+                                Paragraph(
+                                    f"<font color='#6b7280'>{sess_count}</font>",
+                                    styles["Normal"],
+                                ),
+                            ]
+                        )
+
                 # Render the table for this day
-                t = Table(table_data, colWidths=[3.5*inch, 1.5*inch, 1*inch])
-                t.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), LIGHT_TEXT_COLOR),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                    ('ALIGN', (0, 0), (-1, 0), 'LEFT'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 9),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-                    ('TOPPADDING', (0, 0), (-1, 0), 6),
-                    
-                    # General Rows
-                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                    ('ALIGN', (1, 1), (-1, -1), 'LEFT'), # Duration column
-                    ('ALIGN', (2, 1), (-1, -1), 'CENTER'), # Session column
-                    ('LINEBELOW', (0, 0), (-1, -1), 0.25, colors.HexColor('#e5e7eb')),
-                ]))
-                
+                t = Table(
+                    table_data, colWidths=[3.5 * inch, 1.5 * inch, 1 * inch]
+                )
+                t.setStyle(
+                    TableStyle(
+                        [
+                            ("BACKGROUND", (0, 0), (-1, 0), LIGHT_TEXT_COLOR),
+                            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                            ("ALIGN", (0, 0), (-1, 0), "LEFT"),
+                            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                            ("FONTSIZE", (0, 0), (-1, 0), 9),
+                            ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+                            ("TOPPADDING", (0, 0), (-1, 0), 6),
+                            # General Rows
+                            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                            (
+                                "ALIGN",
+                                (1, 1),
+                                (-1, -1),
+                                "LEFT",
+                            ),  # Duration column
+                            (
+                                "ALIGN",
+                                (2, 1),
+                                (-1, -1),
+                                "CENTER",
+                            ),  # Session column
+                            (
+                                "LINEBELOW",
+                                (0, 0),
+                                (-1, -1),
+                                0.25,
+                                colors.HexColor("#e5e7eb"),
+                            ),
+                        ]
+                    )
+                )
+
                 elements.append(t)
-                elements.append(Spacer(1, 0.3*inch))
-                
-                # Check for page break potential if it's getting long? 
+                elements.append(Spacer(1, 0.3 * inch))
+
+                # Check for page break potential if it's getting long?
                 # ReportLab handles auto page breaks mostly fine with SimpleDocTemplate.
 
         # Build PDF
         def footer(canvas, doc):
             canvas.saveState()
-            canvas.setFont('Helvetica', 9)
+            canvas.setFont("Helvetica", 9)
             canvas.setFillColor(colors.grey)
             page_num = canvas.getPageNumber()
             text = f"Page {page_num}"
-            canvas.drawRightString(A4[0] - inch, 0.5*inch, text)
+            canvas.drawRightString(A4[0] - inch, 0.5 * inch, text)
             canvas.restoreState()
 
         doc.build(elements, onFirstPage=footer, onLaterPages=footer)
-        
+
         # Get PDF data
         pdf_data = buffer.getvalue()
         buffer.close()
-        
+
         # Return PDF as download
         from fastapi.responses import Response
-        
+
         filename = f"report_{start_date}_{end_date}.pdf"
         return Response(
             content=pdf_data,
             media_type="application/pdf",
-            headers={
-                "Content-Disposition": f"attachment; filename={filename}"
-            }
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
-        
+
     except ImportError:
         raise HTTPException(
-            status_code=500, 
-            detail="reportlab not installed. Run: pip install reportlab"
+            status_code=500,
+            detail="reportlab not installed. Run: pip install reportlab",
         )
     except Exception as e:
         logger.error(f"Error generating PDF: {e}")
         import traceback
+
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1651,8 +1733,12 @@ async def export_folder_details_pdf(folder_id: int):
 
 # Serve frontend static files
 if config.FRONTEND_BUILD_PATH.exists():
-    app.mount("/assets", StaticFiles(directory=config.FRONTEND_BUILD_PATH / "assets"), name="assets")
-    
+    app.mount(
+        "/assets",
+        StaticFiles(directory=config.FRONTEND_BUILD_PATH / "assets"),
+        name="assets",
+    )
+
     @app.get("/")
     async def serve_frontend():
         """Serve the frontend application"""
@@ -1661,9 +1747,11 @@ if config.FRONTEND_BUILD_PATH.exists():
             return FileResponse(index_file)
         return JSONResponse(
             status_code=404,
-            content={"detail": "Frontend not built. Run 'npm run build' in the frontend directory."}
+            content={
+                "detail": "Frontend not built. Run 'npm run build' in the frontend directory."
+            },
         )
-    
+
     @app.get("/{full_path:path}")
     async def serve_frontend_routes(full_path: str):
         """Serve frontend for all other routes (SPA support)"""
@@ -1671,31 +1759,32 @@ if config.FRONTEND_BUILD_PATH.exists():
         file_path = config.FRONTEND_BUILD_PATH / full_path
         if file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
-        
+
         # Otherwise serve index.html for SPA routing
         index_file = config.FRONTEND_BUILD_PATH / "index.html"
         if index_file.exists():
             return FileResponse(index_file)
-        
-        return JSONResponse(
-            status_code=404,
-            content={"detail": "Not found"}
-        )
+
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
 else:
-    logger.warning(f"Frontend build directory not found: {config.FRONTEND_BUILD_PATH}")
-    logger.warning("Frontend will not be served. Please build the frontend first.")
+    logger.warning(
+        f"Frontend build directory not found: {config.FRONTEND_BUILD_PATH}"
+    )
+    logger.warning(
+        "Frontend will not be served. Please build the frontend first."
+    )
 
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     logger.info(f"Starting server on {config.API_HOST}:{config.API_PORT}")
     logger.info(f"Database location: {config.DB_PATH}")
     logger.info(f"Frontend build path: {config.FRONTEND_BUILD_PATH}")
-    
+
     uvicorn.run(
         app,
         host=config.API_HOST,
         port=config.API_PORT,
-        log_level=config.LOG_LEVEL.lower()
+        log_level=config.LOG_LEVEL.lower(),
     )
